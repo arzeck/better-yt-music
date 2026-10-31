@@ -1,0 +1,921 @@
+/**
+ * Apple Music Lyrics Page Styles for YouTube Music.
+ *
+ * Implements the authentic Apple Music aesthetic:
+ *   - Immersive full-screen overlay with animated fluid mesh backdrop
+ *   - Depth-of-field blur and falloff transitions
+ *   - Huge bold typography (SF Pro Display / system-ui)
+ *   - Word-level lift and karaoke illumination
+ *   - Backing vocal subordinate stack
+ *   - Duet Left / Right column layout
+ *   - Pulsing count-in / interlude dots
+ *   - Responsive layout adapting from wide desktop to compact viewports
+ */
+
+/* ─── Global Reset for the Lyrics Page ─── */
+.ytm-apple-lyrics-page,
+.ytm-apple-lyrics-page * {
+  box-sizing: border-box;
+}
+
+/* ─── Immersive Full Lyrics Page Container ─── */
+.ytm-apple-lyrics-page {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: calc(100vh - 72px); /* Leaves bottom player bar visible or fills completely */
+  z-index: 99990;
+  background-color: #0b0b12;
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, "Noto Sans", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(0.985);
+  transition: opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+              visibility 0.4s;
+  pointer-events: none;
+}
+
+.ytm-apple-lyrics-page.ytm-page-open {
+  opacity: 1;
+  visibility: visible;
+  transform: scale(1);
+  pointer-events: all;
+}
+
+/* When in true browser fullscreen */
+.ytm-apple-lyrics-page:fullscreen {
+  height: 100vh;
+}
+
+/* ─── Canvas Mesh Backdrop & Scrim ─── */
+.ytm-mesh-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: blur(70px) saturate(160%);
+  transform: scale(1.15); /* Prevents edge clipping from blur */
+  z-index: 1;
+  pointer-events: none;
+}
+
+.ytm-lyrics-scrim {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: radial-gradient(circle at 20% 50%, rgba(0, 0, 0, 0.25) 0%, rgba(0, 0, 0, 0.65) 100%),
+              linear-gradient(to bottom, rgba(0, 0, 0, 0.4) 0%, rgba(0, 0, 0, 0.3) 40%, rgba(0, 0, 0, 0.75) 100%);
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* ─── Top Header Bar ─── */
+.ytm-lyrics-header {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24px 36px 12px 36px;
+  height: 68px;
+}
+
+.ytm-header-left,
+.ytm-header-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.ytm-badge-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
+  margin-left: 6px;
+}
+
+.ytm-icon-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.85);
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  backdrop-filter: blur(12px);
+}
+
+.ytm-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  transform: scale(1.06);
+}
+
+/* Offset Controls */
+.ytm-offset-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  padding: 4px 10px;
+  backdrop-filter: blur(12px);
+}
+
+.ytm-offset-controls span {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.8);
+  min-width: 38px;
+  text-align: center;
+}
+
+.ytm-pill-btn {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 10px;
+  transition: all 0.15s;
+}
+
+.ytm-pill-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+}
+
+.ytm-reset-btn {
+  font-size: 11px;
+  padding: 2px 4px;
+  opacity: 0.6;
+}
+
+.ytm-reset-btn:hover {
+  opacity: 1;
+}
+
+/* Source Switcher Selector */
+.ytm-source-selector {
+  position: relative;
+}
+
+.ytm-source-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  padding: 8px 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  transition: all 0.2s ease;
+}
+
+.ytm-source-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.ytm-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  background: rgba(24, 24, 34, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 16px;
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.75);
+  padding: 6px;
+  min-width: 260px;
+  max-height: 380px;
+  overflow-y: auto;
+  z-index: 99999;
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ytm-dropdown-menu.ytm-dropdown-open {
+  display: flex;
+  animation: ytm-dropdown-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes ytm-dropdown-in {
+  from { opacity: 0; transform: translateY(-8px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.ytm-dropdown-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.ytm-dropdown-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.ytm-dropdown-item.ytm-dropdown-active {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.ytm-source-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.ytm-sync-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ytm-badge-word {
+  background: rgba(94, 234, 212, 0.15);
+  color: #5eead4;
+}
+
+.ytm-badge-line {
+  background: rgba(147, 197, 253, 0.15);
+  color: #93c5fd;
+}
+
+.ytm-badge-plain {
+  background: rgba(156, 163, 175, 0.15);
+  color: #d1d5db;
+}
+
+/* ─── Main Content Grid (Two Columns) ─── */
+.ytm-lyrics-main-grid {
+  position: relative;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: minmax(360px, 460px) 1fr;
+  height: calc(100% - 68px);
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 0 40px 24px 40px;
+  gap: 60px;
+}
+
+/* ─── Left Pane: Artwork & Track Meta ─── */
+.ytm-lyrics-left-pane {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  padding-bottom: 40px;
+  user-select: none;
+}
+
+.ytm-art-wrapper {
+  position: relative;
+  width: min(380px, 80%);
+  aspect-ratio: 1 / 1;
+  border-radius: 22px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55),
+              0 8px 24px rgba(0, 0, 0, 0.4);
+  margin-bottom: 28px;
+}
+
+.ytm-lyrics-art-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 22px;
+  display: block;
+}
+
+.ytm-art-glow {
+  position: absolute;
+  inset: -12px;
+  border-radius: 32px;
+  background: inherit;
+  filter: blur(28px);
+  opacity: 0.45;
+  z-index: -1;
+}
+
+.ytm-track-meta {
+  max-width: 380px;
+}
+
+.ytm-track-title {
+  font-size: 32px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+  color: #ffffff;
+  margin: 0 0 8px 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.ytm-track-artist {
+  font-size: 20px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+  margin: 0 0 6px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ytm-track-album {
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.35);
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ─── Right Pane: Scrolling Lyrics Stream ─── */
+.ytm-lyrics-right-pane {
+  position: relative;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  scroll-behavior: smooth;
+  padding: 0 20px 0 0;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 48px, #000 calc(100% - 64px), transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 48px, #000 calc(100% - 64px), transparent 100%);
+}
+
+.ytm-lyrics-right-pane::-webkit-scrollbar {
+  display: none;
+}
+
+.ytm-lyrics-stream {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  min-height: 100%;
+}
+
+.ytm-stream-spacer {
+  height: 42vh;
+  flex-shrink: 0;
+}
+
+/* ─── Lyric Row Typography & Styling ─── */
+.ytm-lyric-row {
+  width: 100%;
+  margin: 12px 0;
+  padding: 6px 12px;
+  border-radius: 16px;
+  cursor: pointer;
+  user-select: none;
+  transform-origin: left center;
+  font-weight: 800;
+  /* Smooth continuous transitions for dynamic blur/opacity driven by JS each frame */
+  transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+              opacity 0.4s ease,
+              filter 0.4s ease;
+  will-change: transform, opacity, filter;
+}
+
+/* Duet Alignments */
+.ytm-lyric-row.ytm-align-start {
+  text-align: left;
+  transform-origin: left center;
+}
+
+.ytm-lyric-row.ytm-align-end {
+  text-align: right;
+  transform-origin: right center;
+  padding-left: 20%; /* Duet lane indent */
+}
+
+/* Lead Vocal Typography */
+.ytm-lead-vocal {
+  font-size: 46px;
+  font-weight: 800;
+  line-height: 1.22;
+  letter-spacing: -0.025em;
+  display: inline-block;
+  word-break: break-word;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Subordinate / Answering Background Vocal */
+.ytm-bg-vocal {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.75);
+  margin-top: 6px;
+  font-style: italic;
+  display: block;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+              filter 0.2s,
+              visibility 0s linear 0.25s;
+}
+
+/* Active Line Focus */
+.ytm-lyric-row.ytm-row-active {
+  opacity: 1 !important;
+  filter: blur(0px) !important;
+  transform: scale(1.035);
+  cursor: default;
+}
+
+.ytm-lyric-row.ytm-row-active .ytm-lead-vocal {
+  color: #ffffff;
+}
+
+/* Inactive Line Hover Interaction */
+.ytm-lyric-row:not(.ytm-row-active):hover {
+  opacity: 0.85 !important;
+  filter: blur(0.5px) !important;
+  transform: scale(1.01);
+}
+
+/* ─── Word-by-Word Karaoke Illumination & Blurred Wave Fill ─── */
+.ytm-word {
+  display: inline-block;
+  opacity: 0.28;
+  font-weight: 800;
+  transform: scale(1);
+  transform-origin: center bottom;
+  /* Smooth gentle scaling and glow transitions */
+  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+              opacity 0.2s ease-out,
+              filter 0.2s ease-out;
+  will-change: transform, opacity, filter;
+  white-space: pre; /* preserve spacing between words */
+}
+
+/* Each character inside a word-synced span */
+.ytm-char {
+  display: inline-block;
+  font-weight: 800;
+  /* Blurred glowing wave edge: soft gradient band around the fill front instead of a hard plain line */
+  background: linear-gradient(
+    to right,
+    #ffffff calc(var(--ytm-char-fill, 0) * 100% - 24%),
+    rgba(255, 255, 255, 0.95) calc(var(--ytm-char-fill, 0) * 100% - 8%),
+    rgba(255, 255, 255, 0.58) calc(var(--ytm-char-fill, 0) * 100% + 6%),
+    rgba(255, 255, 255, 0.28) calc(var(--ytm-char-fill, 0) * 100% + 24%)
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  transition: background 0.05s linear;
+  will-change: background;
+}
+
+/* Past word chars — fully illuminated white */
+.ytm-word[data-past="true"] .ytm-char {
+  background: #ffffff;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Line-Synced Gradient Sweep fallback */
+.ytm-line-text {
+  display: inline;
+  color: #ffffff;
+  font-weight: 800;
+  transition: background-image 0.1s linear;
+}
+
+/* Background Vocal Words */
+.ytm-bg-word {
+  display: inline-block;
+  font-weight: 700;
+}
+
+/* ─── Instrumental Breaks (3 Breathing Dots) ─── */
+.ytm-gap-row {
+  margin: 20px 0;
+  cursor: pointer;
+}
+
+.ytm-gap-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 20px;
+}
+
+.ytm-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.3);
+  display: inline-block;
+  transition: all 0.3s;
+}
+
+.ytm-gap-active .ytm-dot {
+  background: rgba(255, 255, 255, 0.95);
+  animation: ytm-dot-breath 1.8s ease-in-out infinite;
+}
+
+.ytm-gap-active .ytm-dot:nth-child(2) { animation-delay: 0.3s; }
+.ytm-gap-active .ytm-dot:nth-child(3) { animation-delay: 0.6s; }
+
+@keyframes ytm-dot-breath {
+  0%, 100% { transform: scale(1); opacity: 0.4; }
+  50%      { transform: scale(1.6); opacity: 1; filter: drop-shadow(0 0 6px #fff); }
+}
+
+/* ─── Floating Resume Sync Pill ─── */
+.ytm-resume-sync-pill {
+  position: absolute;
+  bottom: 24px;
+  right: 28px;
+  background: rgba(30, 30, 45, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  padding: 10px 18px;
+  border-radius: 24px;
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(20px);
+  opacity: 0;
+  transform: translateY(16px);
+  pointer-events: none;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 20;
+}
+
+.ytm-resume-sync-pill.ytm-pill-visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: all;
+}
+
+.ytm-resume-sync-pill:hover {
+  background: rgba(45, 45, 65, 0.95);
+  transform: translateY(-2px);
+}
+
+/* ─── Loading & Empty States ─── */
+.ytm-loading-state,
+.ytm-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 50vh;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.ytm-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid rgba(255, 255, 255, 0.15);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: ytm-spin 0.8s linear infinite;
+  margin-bottom: 16px;
+}
+
+@keyframes ytm-spin {
+  to { transform: rotate(360deg); }
+}
+
+.ytm-empty-state h3 {
+  font-size: 22px;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 16px 0 6px 0;
+}
+
+.ytm-empty-state p {
+  font-size: 14px;
+  max-width: 380px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.ytm-retry-btn {
+  margin-top: 16px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+  padding: 8px 20px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ytm-retry-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
+  transform: scale(1.04);
+}
+
+/* ─── Native YouTube Music Toolbar Integration ─── */
+.ytm-custom-lyrics-btn {
+  background: transparent;
+  border: none;
+  color: var(--ytmusic-icon-inactive, rgba(255, 255, 255, 0.7));
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  vertical-align: middle;
+}
+
+.ytm-custom-lyrics-btn:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+  transform: scale(1.08);
+}
+
+.ytm-custom-lyrics-btn.ytm-btn-active {
+  color: #ff3377;
+  filter: drop-shadow(0 0 8px rgba(255, 51, 119, 0.5));
+}
+
+/* ─── Default YouTube Music Lyrics Tab Integration ─── */
+.ytm-enhanced-tab-host {
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100% !important;
+  max-height: 100% !important;
+  overflow: hidden !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+}
+
+/* Hide native YouTube Music static lyrics / "Lyrics not available" */
+.ytm-enhanced-tab-host > ytmusic-section-list-renderer,
+.ytm-enhanced-tab-host > ytmusic-description-shelf-renderer,
+.ytm-enhanced-tab-host ytmusic-message-renderer,
+.ytm-enhanced-tab-host #description,
+.ytm-enhanced-tab-host .footer.ytmusic-description-shelf-renderer {
+  display: none !important;
+}
+
+.ytm-tab-lyrics-container {
+  display: flex !important;
+  flex-direction: column !important;
+  width: 100% !important;
+  height: 100% !important;
+  flex: 1 1 auto !important;
+  position: relative !important;
+  overflow: hidden !important;
+  background: transparent;
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  box-sizing: border-box;
+}
+
+.ytm-tab-header {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: rgba(18, 18, 24, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  z-index: 20;
+  flex-shrink: 0;
+}
+
+.ytm-tab-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ytm-btn-compact {
+  padding: 4px 10px !important;
+  font-size: 11px !important;
+  height: 28px !important;
+}
+
+.ytm-controls-compact {
+  gap: 4px !important;
+  padding: 2px 6px !important;
+  height: 28px !important;
+}
+
+.ytm-controls-compact .ytm-pill-btn {
+  width: 22px !important;
+  height: 22px !important;
+  font-size: 12px !important;
+}
+
+.ytm-controls-compact #ytm-tab-offset-val {
+  font-size: 11px !important;
+}
+
+.ytm-tab-expand-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+  user-select: none;
+}
+
+.ytm-tab-expand-btn:hover {
+  background: rgba(255, 255, 255, 0.24);
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: scale(1.03);
+}
+
+.ytm-tab-lyrics-scroll {
+  position: relative;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 20px 24px 160px 24px;
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 24px, #000 calc(100% - 40px), transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 24px, #000 calc(100% - 40px), transparent 100%);
+}
+
+.ytm-tab-lyrics-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.ytm-tab-lyrics-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ytm-tab-lyrics-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+.ytm-tab-lyrics-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.ytm-tab-stream {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  max-width: 650px;
+  margin: 0 auto;
+}
+
+.ytm-tab-stream .ytm-stream-spacer {
+  height: 70px;
+  flex-shrink: 0;
+}
+
+.ytm-tab-row {
+  margin: 8px 0;
+  padding: 6px 10px;
+  border-radius: 12px;
+  font-weight: 800;
+  transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+              opacity 0.4s ease,
+              filter 0.4s ease;
+  will-change: transform, opacity, filter;
+}
+
+.ytm-tab-row.ytm-align-end {
+  padding-left: 14%;
+}
+
+.ytm-tab-row .ytm-lead-vocal {
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1.28;
+  letter-spacing: -0.018em;
+  -webkit-font-smoothing: antialiased;
+}
+
+.ytm-tab-row .ytm-bg-vocal {
+  font-size: 19px;
+  font-weight: 700;
+  margin-top: 4px;
+}
+
+.ytm-tab-row.ytm-row-active .ytm-lead-vocal {
+  color: #ffffff;
+  opacity: 1;
+  text-shadow: 0 0 20px rgba(255, 255, 255, 0.45);
+}
+
+.ytm-tab-row.ytm-row-past,
+.ytm-tab-row.ytm-row-future {
+  transform: scale(0.985);
+}
+
+.ytm-tab-row:hover {
+  opacity: 0.85 !important;
+  filter: blur(0px) !important;
+  transform: scale(1) !important;
+}
+
+/* ─── Responsive Viewports ─── */
+@media (max-width: 1024px) {
+  .ytm-lyrics-main-grid {
+    grid-template-columns: 320px 1fr;
+    gap: 36px;
+    padding: 0 24px;
+  }
+  .ytm-lead-vocal {
+    font-size: 38px;
+  }
+  .ytm-bg-vocal {
+    font-size: 22px;
+  }
+}
+
+@media (max-width: 768px) {
+  .ytm-lyrics-main-grid {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+  .ytm-lyrics-left-pane {
+    flex-direction: row;
+    align-items: center;
+    gap: 20px;
+    padding-bottom: 12px;
+  }
+  .ytm-art-wrapper {
+    width: 100px;
+    margin-bottom: 0;
+  }
+  .ytm-track-title {
+    font-size: 22px;
+  }
+  .ytm-track-artist {
+    font-size: 15px;
+  }
+  .ytm-lead-vocal {
+    font-size: 30px;
+  }
+}

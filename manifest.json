@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "name": "Apple Music Lyrics for YouTube Music",
+  "version": "2.0.0",
+  "description": "True Apple Music-style lyrics experience for YouTube Music with word-level sync, duets, and multi-source provider racing (BitChord engine)",
+  "permissions": ["storage", "declarativeNetRequest"],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://music.youtube.com/*"],
+      "js": ["src/main-world-bridge.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://music.youtube.com/*"],
+      "js": [
+        "src/models.js",
+        "src/ttml-parser.js",
+        "src/lrc-parser.js",
+        "src/sources.js",
+        "src/lyrics-repository.js",
+        "src/mesh-backdrop.js",
+        "src/lyrics-page.js",
+        "src/content.js"
+      ],
+      "css": ["src/styles.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
