@@ -452,7 +452,7 @@
 
     if (e.key === 'l' || e.key === 'L') {
       e.preventDefault();
-      toggleFullLyricsPage();
+      toggleLyricsPage();
       const btn = document.getElementById('ytm-custom-lyrics-toggle-btn');
       if (btn) btn.classList.toggle('ytm-btn-active');
     }

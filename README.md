@@ -93,3 +93,9 @@ yt-music-better/
 - **`+` / `−` Buttons**: Nudge lyric timing offset in increments of 0.2s
 - **`Auto` / Source Dropdown**: Switch between any of the 13 discovered providers
 - **Default Lyrics Tab**: Click "Lyrics" in YouTube Music's player to view embedded synced lyrics
+
+---
+
+## 🛠️ Custom Lyrics API Guide
+
+Want to build or connect your own private, self-hosted, or community lyrics server? Check out our complete [Custom Lyrics API Specification & Developer Guide](/CUSTOM_LYRICS_API.md) covering endpoint specifications, Apple Music TTML, Structured JSON, Enhanced LRC, and runnable server implementations in Node.js, Python, and Cloudflare Workers.

@@ -39,7 +39,9 @@ function createLyricLine({
   sungUntilMs = null,
   background = null,
   alignment = 'Start',
-  timingSource = null
+  timingSource = null,
+  roman = '',
+  translation = ''
 } = {}) {
   const line = {
     timeMs: Math.round(timeMs),
@@ -49,6 +51,8 @@ function createLyricLine({
     background: background || null,
     alignment: alignment || 'Start',
     timingSource: timingSource || null,
+    roman: roman || '',
+    translation: translation || '',
 
     get isGap() {
       return this.text.length === 0;

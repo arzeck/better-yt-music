@@ -100,6 +100,358 @@
     return text.match(/[\s\S][\u0300-\u036F\u0900-\u097F\u0980-\u09FF\u0A00-\u0A7F\u0A80-\u0AFF\u0B00-\u0B7F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\u0D80-\u0DFF\u0E00-\u0E7F\u1DC0-\u1DFF\u20D0-\u20FF\uFE20-\uFE2F]*/g) || Array.from(text);
   }
 
+  // ─── Subtext Engine: Romanization & Translation ─────────────────────────────
+  let isRomanizeActive = false;
+  let isTranslateActive = false;
+  let isFetchingSubtext = false;
+  const subtextCache = new Map(); // trackKey -> { roman: string[], trans: string[] }
+
+  function getTrackKey() {
+    return `${currentTrackMeta.title || ''}::${currentTrackMeta.artist || ''}`.toLowerCase().trim();
+  }
+
+  function isNonLatin(str) {
+    if (!str) return false;
+    return /[\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uAC00-\uD7AF\u0400-\u04FF\u0900-\u097F\u0600-\u06FF\u0E00-\u0E7F\u0370-\u03FF\u0590-\u05FF]/.test(str);
+  }
+
+  function romanizeHangul(text) {
+    const CHOSEONG = ['g', 'kk', 'n', 'd', 'tt', 'r', 'm', 'b', 'pp', 's', 'ss', '', 'j', 'jj', 'ch', 'k', 't', 'p', 'h'];
+    const JUNGSEONG = ['a', 'ae', 'ya', 'yae', 'eo', 'e', 'yeo', 'ye', 'o', 'wa', 'wae', 'oe', 'yo', 'u', 'wo', 'we', 'wi', 'yu', 'eu', 'ui', 'i'];
+    const JONGSEONG = ['', 'k', 'k', 'ks', 'n', 'nj', 'nh', 'd', 'l', 'lg', 'lm', 'lb', 'ls', 'lt', 'lp', 'lh', 'm', 'b', 'bs', 's', 'ss', 'ng', 'j', 'ch', 'k', 't', 'p', 'h'];
+    let result = '';
+    for (let i = 0; i < text.length; i++) {
+      const code = text.charCodeAt(i);
+      if (code >= 0xAC00 && code <= 0xD7A3) {
+        const syl = code - 0xAC00;
+        const cho = Math.floor(syl / 588);
+        const jung = Math.floor((syl % 588) / 28);
+        const jong = syl % 28;
+        result += CHOSEONG[cho] + JUNGSEONG[jung] + JONGSEONG[jong];
+      } else {
+        result += text[i];
+      }
+    }
+    return result;
+  }
+
+  const KANA_ROM_MAP = {
+    'あ':'a','い':'i','う':'u','え':'e','お':'o',
+    'か':'ka','き':'ki','く':'ku','け':'ke','こ':'ko',
+    'さ':'sa','し':'shi','す':'su','せ':'se','そ':'so',
+    'た':'ta','ち':'chi','つ':'tsu','て':'te','と':'to',
+    'な':'na','に':'ni','ぬ':'nu','ね':'ne','の':'no',
+    'は':'ha','ひ':'hi','ふ':'fu','へ':'he','ほ':'ho',
+    'ま':'ma','み':'mi','む':'mu','め':'me','も':'mo',
+    'や':'ya','ゆ':'yu','よ':'yo',
+    'ら':'ra','り':'ri','る':'ru','れ':'re','ろ':'ro',
+    'わ':'wa','を':'wo','ん':'n',
+    'が':'ga','ぎ':'gi','ぐ':'gu','げ':'ge','ご':'go',
+    'ざ':'za','じ':'ji','ず':'zu','ぜ':'ze','ぞ':'zo',
+    'だ':'da','ぢ':'ji','づ':'dzu','で':'de','ど':'do',
+    'ば':'ba','び':'bi','ぶ':'bu','べ':'be','ぼ':'bo',
+    'ぱ':'pa','ぴ':'pi','ぷ':'pu','ぺ':'pe','ぽ':'po',
+    'きゃ':'kya','きゅ':'kyu','きょ':'kyo',
+    'しゃ':'sha','しゅ':'shu','しょ':'sho',
+    'ちゃ':'cha','ちゅ':'chu','ちょ':'cho',
+    'にゃ':'nya','にゅ':'nyu','にょ':'nyo',
+    'ひゃ':'hya','ひゅ':'hyu','ひょ':'hyo',
+    'みゃ':'mya','みゅ':'myu','みょ':'myo',
+    'りゃ':'rya','りゅ':'ryu','りょ':'ryo',
+    'ぎゃ':'gya','ぎゅ':'gyu','ぎょ':'gyo',
+    'じゃ':'ja','じゅ':'ju','じょ':'jo',
+    'びゃ':'bya','びゅ':'byu','びょ':'byo',
+    'ぴゃ':'pya','ぴゅ':'pyu','ぴょ':'pyo',
+    'ー':'-'
+  };
+
+  function kanaToRomaji(str) {
+    let hira = '';
+    for (let i = 0; i < str.length; i++) {
+      const c = str.charCodeAt(i);
+      if (c >= 0x30A1 && c <= 0x30F6) {
+        hira += String.fromCharCode(c - 0x60);
+      } else {
+        hira += str[i];
+      }
+    }
+    let res = '';
+    for (let i = 0; i < hira.length; i++) {
+      const two = hira.slice(i, i + 2);
+      if (KANA_ROM_MAP[two]) {
+        res += KANA_ROM_MAP[two];
+        i++;
+        continue;
+      }
+      if (hira[i] === 'っ') {
+        const nextTwo = hira.slice(i + 1, i + 3);
+        const nextChar = hira[i + 1];
+        const nextRom = KANA_ROM_MAP[nextTwo] || KANA_ROM_MAP[nextChar];
+        if (nextRom) {
+          res += nextRom[0];
+        }
+        continue;
+      }
+      if (KANA_ROM_MAP[hira[i]]) {
+        res += KANA_ROM_MAP[hira[i]];
+      } else {
+        res += hira[i];
+      }
+    }
+    return res.trim();
+  }
+
+  const CYRILLIC_MAP = {
+    'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'yo','ж':'zh','з':'z','и':'i','й':'y',
+    'к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u','ф':'f',
+    'х':'kh','ц':'ts','ч':'ch','ш':'sh','щ':'shch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya',
+    'А':'A','Б':'B','В':'V','Г':'G','Д':'D','Е':'E','Ё':'Yo','Ж':'Zh','З':'Z','И':'I','Й':'Y',
+    'К':'K','Л':'L','М':'M','Н':'N','О':'O','П':'P','Р':'R','С':'S','Т':'T','У':'U','Ф':'F',
+    'Х':'Kh','Ц':'Ts','Ч':'Ch','Ш':'Sh','Щ':'Shch','Ъ':'','Ы':'Y','Ь':'','Э':'E','Ю':'Yu','Я':'Ya'
+  };
+
+  const DEVA_CONSONANTS = {
+    'क':'k','ख':'kh','ग':'g','घ':'gh','ङ':'ng','च':'ch','छ':'chh','ज':'j','झ':'jh','ञ':'ny',
+    'ट':'t','ठ':'th','ड':'d','ढ':'dh','ण':'n','त':'t','थ':'th','द':'d','ध':'dh','न':'n',
+    'प':'p','फ':'ph','ब':'b','भ':'bh','म':'m','य':'y','र':'r','ल':'l','व':'v','श':'sh','ष':'sh','स':'s','ह':'h',
+    'क़':'q','ख़':'kh','ग़':'gh','ज़':'z','ड़':'r','ढ़':'rh','फ़':'f'
+  };
+  const DEVA_VOWELS = {
+    'अ':'a','आ':'aa','इ':'i','ई':'ee','उ':'u','ऊ':'oo','ऋ':'ri','ए':'e','ऐ':'ai','ओ':'o','औ':'au'
+  };
+  const DEVA_MATRAS = {
+    'ा':'aa','ि':'i','ी':'ee','ु':'u','ू':'oo','ृ':'ri','े':'e','ै':'ai','ो':'o','ौ':'au'
+  };
+
+  function devanagariToLatin(str) {
+    let res = '';
+    for (let i = 0; i < str.length; i++) {
+      const two = str.slice(i, i + 2);
+      if (DEVA_CONSONANTS[two]) {
+        const c = DEVA_CONSONANTS[two];
+        const next = str[i + 2];
+        if (next === '्') { res += c; i += 2; }
+        else if (DEVA_MATRAS[next]) { res += c + DEVA_MATRAS[next]; i += 2; }
+        else if (next === 'ं' || next === 'ँ') { res += c + 'an'; i += 2; }
+        else { res += c + 'a'; i += 1; }
+        continue;
+      }
+      const ch = str[i];
+      if (DEVA_CONSONANTS[ch]) {
+        const c = DEVA_CONSONANTS[ch];
+        const next = str[i + 1];
+        if (next === '्') { res += c; i++; }
+        else if (DEVA_MATRAS[next]) { res += c + DEVA_MATRAS[next]; i++; }
+        else if (next === 'ं' || next === 'ँ') { res += c + 'an'; i++; }
+        else { res += c + 'a'; }
+        continue;
+      }
+      if (DEVA_VOWELS[ch]) { res += DEVA_VOWELS[ch]; continue; }
+      if (DEVA_MATRAS[ch]) { res += DEVA_MATRAS[ch]; continue; }
+      if (ch === 'ं' || ch === 'ँ') { res += 'n'; continue; }
+      if (ch === '्') continue;
+      res += ch;
+    }
+    return res.replace(/\s+/g, ' ').trim();
+  }
+
+  function transliterateFallback(text) {
+    if (!text) return '';
+    if (/[\uAC00-\uD7AF]/.test(text)) return romanizeHangul(text);
+    if (/[\u3040-\u309F\u30A0-\u30FF]/.test(text) && !/[\u4E00-\u9FFF]/.test(text)) return kanaToRomaji(text);
+    if (/[\u0400-\u04FF]/.test(text)) return text.split('').map(c => CYRILLIC_MAP[c] !== undefined ? CYRILLIC_MAP[c] : c).join('');
+    if (/[\u0900-\u097F]/.test(text)) return devanagariToLatin(text);
+    return '';
+  }
+
+  async function fetchGoogleSubtext(linesArr) {
+    if (!linesArr || linesArr.length === 0) return { roman: [], trans: [] };
+    const netFetch = window.__YTMLSources?.netFetch;
+    if (!netFetch) return { roman: [], trans: [] };
+
+    const chunkSize = 20;
+    const allRoman = new Array(linesArr.length).fill('');
+    const allTrans = new Array(linesArr.length).fill('');
+
+    const chunks = [];
+    for (let i = 0; i < linesArr.length; i += chunkSize) {
+      chunks.push({ startIdx: i, slice: linesArr.slice(i, i + chunkSize) });
+    }
+
+    await Promise.all(chunks.map(async (chunk) => {
+      try {
+        const textToQuery = chunk.slice.map(l => (l.text || '').trim() || '...').join('\n');
+        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&dt=rm&q=${encodeURIComponent(textToQuery)}`;
+        const res = await netFetch(url, { timeoutMs: 7000 });
+        if (!res || !res.ok) return;
+
+        let json;
+        try {
+          json = typeof res.json === 'function' ? await res.json() : JSON.parse(res.data);
+        } catch (_) {
+          return;
+        }
+
+        if (!Array.isArray(json) || !Array.isArray(json[0])) return;
+
+        let transCombined = '';
+        let romanCombined = '';
+
+        for (const seg of json[0]) {
+          if (!seg) continue;
+          if (typeof seg[0] === 'string') {
+            transCombined += seg[0];
+          } else if (seg[0] === null) {
+            if (typeof seg[2] === 'string' && seg[2].trim()) {
+              romanCombined = seg[2];
+            } else if (typeof seg[3] === 'string' && seg[3].trim()) {
+              romanCombined = seg[3];
+            }
+          }
+        }
+
+        const splittedTrans = transCombined.split('\n').map(s => s.trim());
+        const splittedRoman = romanCombined.split('\n').map(s => s.trim());
+
+        chunk.slice.forEach((line, relIdx) => {
+          const absIdx = chunk.startIdx + relIdx;
+          const tr = splittedTrans[relIdx] || '';
+          const rm = splittedRoman[relIdx] || '';
+
+          if (tr && tr !== '...' && tr.toLowerCase() !== line.text.trim().toLowerCase()) {
+            allTrans[absIdx] = tr;
+          }
+
+          if (isNonLatin(line.text)) {
+            allRoman[absIdx] = (rm && rm !== '...') ? rm : transliterateFallback(line.text);
+          }
+        });
+      } catch (err) {
+        console.warn('[YTMLyrics] Subtext batch error:', err);
+      }
+    }));
+
+    return { roman: allRoman, trans: allTrans };
+  }
+
+  function applySubtextToDom() {
+    const applyToArr = (arr) => {
+      arr.forEach((rowEl, i) => {
+        if (!rowEl) return;
+        const line = currentLines[i];
+        if (!line) return;
+        const romanEl = rowEl.querySelector('.ytm-subtext-roman');
+        const transEl = rowEl.querySelector('.ytm-subtext-trans');
+        if (romanEl) romanEl.textContent = line.roman || '';
+        if (transEl) transEl.textContent = line.translation || '';
+      });
+    };
+    applyToArr(fullLineElements);
+    applyToArr(tabLineElements);
+  }
+
+  async function ensureSubtextLoaded() {
+    if (!currentLines || currentLines.length === 0) return;
+    const trackKey = getTrackKey();
+
+    if (subtextCache.has(trackKey)) {
+      const cached = subtextCache.get(trackKey);
+      currentLines.forEach((l, i) => {
+        if (!l.roman && cached.roman[i]) l.roman = cached.roman[i];
+        if (!l.translation && cached.trans[i]) l.translation = cached.trans[i];
+      });
+      applySubtextToDom();
+      return;
+    }
+
+    const hasAnyRoman = currentLines.some(l => l.roman);
+    const hasAnyTrans = currentLines.some(l => l.translation);
+    const needRoman = isRomanizeActive && !hasAnyRoman && currentLines.some(l => isNonLatin(l.text));
+    const needTrans = isTranslateActive && !hasAnyTrans && currentLines.some(l => l.text.trim().length > 0);
+
+    if (!needRoman && !needTrans) {
+      applySubtextToDom();
+      return;
+    }
+
+    // Instant local fallback for romanization
+    currentLines.forEach(l => {
+      if (!l.roman && isNonLatin(l.text)) {
+        l.roman = transliterateFallback(l.text);
+      }
+    });
+    applySubtextToDom();
+
+    if (isFetchingSubtext) return;
+    isFetchingSubtext = true;
+    updateSubtextVisibility();
+
+    try {
+      const fetched = await fetchGoogleSubtext(currentLines);
+      subtextCache.set(trackKey, fetched);
+
+      if (getTrackKey() === trackKey) {
+        currentLines.forEach((l, i) => {
+          if (fetched.roman[i]) l.roman = fetched.roman[i];
+          if (fetched.trans[i]) l.translation = fetched.trans[i];
+        });
+        applySubtextToDom();
+      }
+    } catch (e) {
+      console.warn('[YTMLyrics] Failed to fetch subtext:', e);
+    } finally {
+      isFetchingSubtext = false;
+      updateSubtextVisibility();
+    }
+  }
+
+  function updateSubtextVisibility() {
+    const fullRomanBtn = document.getElementById('ytm-lyrics-romanize-btn');
+    const fullTransBtn = document.getElementById('ytm-lyrics-translate-btn');
+    if (fullRomanBtn) {
+      fullRomanBtn.classList.toggle('ytm-footer-btn-active', isRomanizeActive);
+      fullRomanBtn.classList.toggle('ytm-subtext-loading', isFetchingSubtext && isRomanizeActive);
+    }
+    if (fullTransBtn) {
+      fullTransBtn.classList.toggle('ytm-footer-btn-active', isTranslateActive);
+      fullTransBtn.classList.toggle('ytm-subtext-loading', isFetchingSubtext && isTranslateActive);
+    }
+
+    const tabRomanBtn = document.getElementById('ytm-tab-romanize-btn');
+    const tabTransBtn = document.getElementById('ytm-tab-translate-btn');
+    if (tabRomanBtn) {
+      tabRomanBtn.classList.toggle('ytm-tab-btn-active', isRomanizeActive);
+    }
+    if (tabTransBtn) {
+      tabTransBtn.classList.toggle('ytm-tab-btn-active', isTranslateActive);
+    }
+
+    if (fullScrollContainer) {
+      fullScrollContainer.classList.toggle('ytm-show-roman', isRomanizeActive);
+      fullScrollContainer.classList.toggle('ytm-show-trans', isTranslateActive);
+    }
+    if (tabScrollContainer) {
+      tabScrollContainer.classList.toggle('ytm-show-roman', isRomanizeActive);
+      tabScrollContainer.classList.toggle('ytm-show-trans', isTranslateActive);
+    }
+  }
+
+  // Restore saved preferences from extension storage
+  try {
+    if (typeof chrome !== 'undefined' && chrome?.storage?.local) {
+      chrome.storage.local.get(['lyricsRomanize', 'lyricsTranslate'], (res) => {
+        if (res) {
+          if (typeof res.lyricsRomanize === 'boolean') isRomanizeActive = res.lyricsRomanize;
+          if (typeof res.lyricsTranslate === 'boolean') isTranslateActive = res.lyricsTranslate;
+          updateSubtextVisibility();
+          if ((isRomanizeActive || isTranslateActive) && currentLines.length > 0) {
+            ensureSubtextLoaded();
+          }
+        }
+      });
+    }
+  } catch (_) {}
+
   // ─── 1. Full Page DOM Initialization ──────────────────────────────────────────
 
   function formatSeconds(sec) {
@@ -409,9 +761,9 @@
             </div>
 
             <div class="ytm-lyrics-footer">
-              <button class="ytm-footer-icon-btn" title="Original language"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg></button>
+              <button id="ytm-lyrics-romanize-btn" class="ytm-footer-icon-btn" title="Romanise lyrics (show phonetic pronunciation below line)"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg></button>
               <span id="ytm-lyrics-footer-source" class="ytm-footer-source" role="button" tabindex="0" title="Click to manage lyrics providers & sync">Getting the lyrics</span>
-              <button class="ytm-footer-icon-btn" title="Translate lyrics"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg></button>
+              <button id="ytm-lyrics-translate-btn" class="ytm-footer-icon-btn" title="Translate lyrics to English (show translation below line)"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg></button>
 
               <!-- Floating Lyrics Provider Manager Popover -->
               <div id="ytm-provider-popup" class="ytm-provider-popup" role="dialog" aria-label="Lyrics Providers">
@@ -682,6 +1034,36 @@
       });
     }
 
+    const romanBtn = document.getElementById('ytm-lyrics-romanize-btn');
+    if (romanBtn) {
+      romanBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        isRomanizeActive = !isRomanizeActive;
+        if (typeof chrome !== 'undefined' && chrome?.storage?.local) {
+          chrome.storage.local.set({ lyricsRomanize: isRomanizeActive });
+        }
+        updateSubtextVisibility();
+        if (isRomanizeActive && currentLines.length > 0) {
+          ensureSubtextLoaded();
+        }
+      });
+    }
+
+    const transBtn = document.getElementById('ytm-lyrics-translate-btn');
+    if (transBtn) {
+      transBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        isTranslateActive = !isTranslateActive;
+        if (typeof chrome !== 'undefined' && chrome?.storage?.local) {
+          chrome.storage.local.set({ lyricsTranslate: isTranslateActive });
+        }
+        updateSubtextVisibility();
+        if (isTranslateActive && currentLines.length > 0) {
+          ensureSubtextLoaded();
+        }
+      });
+    }
+
     const popupCloseBtn = document.getElementById('ytm-popup-close-btn');
     if (popupCloseBtn) {
       popupCloseBtn.addEventListener('click', (e) => {
@@ -870,6 +1252,19 @@
             <button id="ytm-tab-offset-plus" class="ytm-pill-btn">+</button>
             <button id="ytm-tab-offset-reset" class="ytm-pill-btn ytm-reset-btn" title="Reset">⟲</button>
           </div>
+
+          <button id="ytm-tab-romanize-btn" class="ytm-pill-btn ytm-btn-compact" title="Romanise lyrics">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+            </svg>
+            <span>Rom</span>
+          </button>
+          <button id="ytm-tab-translate-btn" class="ytm-pill-btn ytm-btn-compact" title="Translate lyrics to English">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
+              <path d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/>
+            </svg>
+            <span>Trans</span>
+          </button>
         </div>
 
         <button id="ytm-tab-expand-btn" class="ytm-tab-expand-btn" title="Expand to Apple Music Full View (L)">
@@ -939,6 +1334,36 @@
     document.getElementById('ytm-tab-offset-minus').addEventListener('click', () => adjustOffset(-200));
     document.getElementById('ytm-tab-offset-plus').addEventListener('click', () => adjustOffset(200));
     document.getElementById('ytm-tab-offset-reset').addEventListener('click', () => resetOffset());
+
+    const tabRomanBtn = document.getElementById('ytm-tab-romanize-btn');
+    if (tabRomanBtn) {
+      tabRomanBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        isRomanizeActive = !isRomanizeActive;
+        if (typeof chrome !== 'undefined' && chrome?.storage?.local) {
+          chrome.storage.local.set({ lyricsRomanize: isRomanizeActive });
+        }
+        updateSubtextVisibility();
+        if (isRomanizeActive && currentLines.length > 0) {
+          ensureSubtextLoaded();
+        }
+      });
+    }
+
+    const tabTransBtn = document.getElementById('ytm-tab-translate-btn');
+    if (tabTransBtn) {
+      tabTransBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        isTranslateActive = !isTranslateActive;
+        if (typeof chrome !== 'undefined' && chrome?.storage?.local) {
+          chrome.storage.local.set({ lyricsTranslate: isTranslateActive });
+        }
+        updateSubtextVisibility();
+        if (isTranslateActive && currentLines.length > 0) {
+          ensureSubtextLoaded();
+        }
+      });
+    }
 
     tabScrollContainer.addEventListener('wheel', () => handleTabUserScroll(), { passive: true });
     tabScrollContainer.addEventListener('touchmove', () => handleTabUserScroll(), { passive: true });
@@ -1023,6 +1448,18 @@
         textSpan.textContent = line.text;
         leadEl.appendChild(textSpan);
         lineRow.appendChild(leadEl);
+
+        const subWrap = document.createElement('div');
+        subWrap.className = 'ytm-subtext-wrap';
+        const romanEl = document.createElement('div');
+        romanEl.className = 'ytm-subtext-line ytm-subtext-roman';
+        romanEl.textContent = line.roman || '';
+        const transEl = document.createElement('div');
+        transEl.className = 'ytm-subtext-line ytm-subtext-trans';
+        transEl.textContent = line.translation || '';
+        subWrap.appendChild(romanEl);
+        subWrap.appendChild(transEl);
+        lineRow.appendChild(subWrap);
       } else if (line.isGap) {
         lineRow.classList.add('ytm-gap-row');
         lineRow.innerHTML = `
@@ -1090,6 +1527,18 @@
           }
           lineRow.appendChild(bgEl);
         }
+
+        const subWrap = document.createElement('div');
+        subWrap.className = 'ytm-subtext-wrap';
+        const romanEl = document.createElement('div');
+        romanEl.className = 'ytm-subtext-line ytm-subtext-roman';
+        romanEl.textContent = line.roman || '';
+        const transEl = document.createElement('div');
+        transEl.className = 'ytm-subtext-line ytm-subtext-trans';
+        transEl.textContent = line.translation || '';
+        subWrap.appendChild(romanEl);
+        subWrap.appendChild(transEl);
+        lineRow.appendChild(subWrap);
 
         // Interactive Click to Seek
         lineRow.addEventListener('click', () => {
@@ -1549,6 +1998,11 @@
 
     renderLyricsStreamInto(fullStreamEl, fullLineElements, 'full');
     renderLyricsStreamInto(tabStreamEl, tabLineElements, 'tab');
+
+    updateSubtextVisibility();
+    if ((isRomanizeActive || isTranslateActive) && currentLines.length > 0) {
+      ensureSubtextLoaded();
+    }
 
     if (isPlainMode) {
       stopRafLoop();

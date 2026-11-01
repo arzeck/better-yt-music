@@ -109,12 +109,19 @@ function mergePiecesIntoWords(pieces) {
  * Recursively flattens DOM nodes into text and timed pieces,
  * separating lead vocals from background vocals (<span ttm:role="x-bg">).
  */
-function collectPieces(node, leadOut, bgOut) {
+function collectPieces(node, leadOut, bgOut, romanOut = [], transOut = []) {
   for (let i = 0; i < node.childNodes.length; i++) {
     const child = node.childNodes[i];
     if (child.nodeType === 1) { // Element
       const role = getAttr(child, 'ttm:role') || getAttr(child, 'role');
-      if (role === 'x-translation' || role === 'x-roman') continue;
+      if (role === 'x-translation') {
+        transOut.push(child.textContent || '');
+        continue;
+      }
+      if (role === 'x-roman') {
+        romanOut.push(child.textContent || '');
+        continue;
+      }
 
       const isBg = role === 'x-bg';
       const targetList = isBg ? bgOut : leadOut;
@@ -130,7 +137,7 @@ function collectPieces(node, leadOut, bgOut) {
       if (begin != null && end != null && !hasTimedChild) {
         targetList.push({ type: 'timed', text: child.textContent || '', start: begin, end });
       } else {
-        collectPieces(child, targetList, bgOut);
+        collectPieces(child, targetList, bgOut, romanOut, transOut);
       }
     } else if (child.nodeType === 3) { // Text node
       const txt = child.nodeValue || '';
@@ -182,10 +189,14 @@ function parseTtmlLyrics(ttmlText) {
 
       const leadPieces = [];
       const bgPieces = [];
-      collectPieces(p, leadPieces, bgPieces);
+      const romanPieces = [];
+      const transPieces = [];
+      collectPieces(p, leadPieces, bgPieces, romanPieces, transPieces);
 
       const leadWords = mergePiecesIntoWords(leadPieces);
       const bgWords = mergePiecesIntoWords(bgPieces);
+      const romanText = romanPieces.join(' ').trim();
+      const transText = transPieces.join(' ').trim();
 
       let bgLine = null;
       if (bgWords.length > 0) {
@@ -206,7 +217,9 @@ function parseTtmlLyrics(ttmlText) {
             timeMs: pBegin,
             text,
             sungUntilMs: pEnd && pEnd > pBegin ? pEnd : null,
-            background: bgLine
+            background: bgLine,
+            roman: romanText,
+            translation: transText
           }),
           agent
         });
@@ -221,7 +234,9 @@ function parseTtmlLyrics(ttmlText) {
             text,
             words: leadWords,
             sungUntilMs: pEnd,
-            background: bgLine
+            background: bgLine,
+            roman: romanText,
+            translation: transText
           }),
           agent
         });
