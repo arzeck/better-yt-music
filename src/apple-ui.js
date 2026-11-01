@@ -289,16 +289,17 @@
         if (e.key === 'Enter') {
           const query = searchInput.value.trim();
           if (query) {
-            window.location.href = `/search?q=${encodeURIComponent(query)}`;
+            sendPlayerCommand('NAVIGATE', `/search?q=${encodeURIComponent(query)}`);
+            updateActiveSidebarRoute('/search');
           }
         }
       });
     }
 
-    // Navigation item click handling (native YouTube SPA navigation)
+    // Navigation item click handling (native YouTube SPA navigation via main-world bridge)
     document.querySelectorAll('.ytm-sidebar-item').forEach(item => {
       item.addEventListener('click', (e) => {
-        const route = item.getAttribute('data-route');
+        const route = item.getAttribute('data-route') || item.getAttribute('href');
         if (!route) return;
 
         e.preventDefault();
@@ -309,24 +310,19 @@
           return;
         }
 
-        // Try triggering native YouTube link if available
-        const nativeLink = document.querySelector(`ytmusic-guide-entry-renderer a[href*="${route}"]`) ||
-                           document.querySelector(`ytmusic-nav-bar a[href*="${route}"]`);
-        if (nativeLink) {
-          nativeLink.click();
-        } else {
-          window.location.href = route;
-        }
+        sendPlayerCommand('NAVIGATE', route);
       });
     });
   }
 
   function updateActiveSidebarRoute(currentPath) {
+    if (!currentPath) currentPath = window.location.pathname + window.location.search;
     document.querySelectorAll('.ytm-sidebar-item').forEach(item => {
       const route = item.getAttribute('data-route');
+      if (!route) return;
       const isActive = route === '/'
         ? (currentPath === '/' || currentPath === '')
-        : (currentPath && currentPath.startsWith(route));
+        : (currentPath.includes(route) || currentPath.startsWith(route));
       item.classList.toggle('ytm-active', Boolean(isActive));
     });
   }
@@ -353,17 +349,15 @@
     });
 
     if (playlists.length === 0) {
-      // If we already have rendered playlists or defaults, never re-render
       if (container.children.length > 0) return;
 
-      // Fallback defaults if guide hasn't rendered yet
       const defaults = [
         'Liked Music', 'New Episodes', 'Drive', 'Late Night',
         'chatpate gaane', 'Blend', 'sleeping song', 'Chill Playlist',
         'Anime Opening', 'Funk', 'edits', 'Couch', 'Random songs'
       ];
       container.innerHTML = defaults.map(p => `
-        <div class="ytm-playlist-item" title="${p}">
+        <div class="ytm-playlist-item ytm-sidebar-item" data-route="/library" title="${p}">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg>
           <span class="ytm-playlist-title">${p}</span>
         </div>
@@ -371,17 +365,27 @@
       return;
     }
 
-    // Only update container DOM if the playlist list has actually changed
     const cacheKey = playlists.map(p => `${p.title}:${p.href}`).join('|');
     if (container.dataset.lastPlaylistsKey === cacheKey) return;
     container.dataset.lastPlaylistsKey = cacheKey;
 
     container.innerHTML = playlists.map(p => `
-      <a href="${p.href || '#'}" class="ytm-playlist-item" title="${p.title}">
+      <a href="${p.href || '#'}" class="ytm-playlist-item ytm-sidebar-item" data-route="${p.href || ''}" title="${p.title}">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg>
         <span class="ytm-playlist-title">${p.title}</span>
       </a>
     `).join('');
+
+    // Re-bind click handlers on newly rendered playlists
+    container.querySelectorAll('.ytm-sidebar-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        const route = item.getAttribute('data-route') || item.getAttribute('href');
+        if (!route) return;
+        e.preventDefault();
+        updateActiveSidebarRoute(route);
+        sendPlayerCommand('NAVIGATE', route);
+      });
+    });
   }
 
   // ─── 3. State & Track Updates ───────────────────────────────────────────────
@@ -436,87 +440,88 @@
     }
   }
 
-  // ─── 4. Transform Homepage Browse Shelves ────────────────────────────────────
+  // ─── 4. Transform Homepage & All Pages into Apple Music UI Language ─────────
 
-  function enhanceHomepage() {
-    // Only on browse / home page
-    const browsePage = document.querySelector('ytmusic-browse-response');
-    if (!browsePage) return;
+  function enhanceCurrentPage() {
+    const path = window.location.pathname;
 
-    // Check all shelves
-    const shelves = browsePage.querySelectorAll('ytmusic-carousel-shelf-renderer, ytmusic-shelf-renderer');
-    if (shelves.length === 0) return;
+    // 1. Process all carousel and standard shelves across pages
+    const containers = document.querySelectorAll('ytmusic-browse-response, ytmusic-search-page, ytmusic-tabbed-search-results-renderer');
+    containers.forEach(container => {
+      const shelves = container.querySelectorAll('ytmusic-carousel-shelf-renderer, ytmusic-shelf-renderer');
+      let foundFirstSongShelf = false;
 
-    let foundFirstSongShelf = false;
+      shelves.forEach((shelf) => {
+        const titleEl = shelf.querySelector('.title.ytmusic-carousel-shelf-basic-header-renderer') ||
+                        shelf.querySelector('.title') ||
+                        shelf.querySelector('h2');
+        const titleText = (titleEl?.textContent || '').trim().toLowerCase();
 
-    shelves.forEach((shelf) => {
-      const titleEl = shelf.querySelector('.title.ytmusic-carousel-shelf-basic-header-renderer') ||
-                      shelf.querySelector('.title') ||
-                      shelf.querySelector('h2');
-      const titleText = (titleEl?.textContent || '').trim().toLowerCase();
+        const hasSongRows = Boolean(shelf.querySelector('ytmusic-responsive-list-item-renderer'));
+        const hasCards = Boolean(shelf.querySelector('ytmusic-two-row-item-renderer'));
 
-      const hasSongRows = Boolean(shelf.querySelector('ytmusic-responsive-list-item-renderer'));
-      const hasCards = Boolean(shelf.querySelector('ytmusic-two-row-item-renderer'));
+        if (hasSongRows && (!foundFirstSongShelf || titleText.includes('listen again') || titleText.includes('recents') || titleText.includes('top song') || titleText.includes('charts'))) {
+          foundFirstSongShelf = true;
+          shelf.classList.add('ytm-recents-shelf', 'ytm-song-shelf');
+          shelf.dataset.ytmlEnhanced = 'true';
 
-      // If this shelf contains songs, style as the 4-row Recents grid!
-      if (hasSongRows && (!foundFirstSongShelf || titleText.includes('listen again') || titleText.includes('recents'))) {
-        foundFirstSongShelf = true;
-        shelf.classList.add('ytm-recents-shelf');
-        shelf.classList.add('ytm-song-shelf');
-        shelf.dataset.ytmlEnhanced = 'true';
-
-        if (titleEl && !titleEl.dataset.ytmlRenamed) {
-          titleEl.textContent = 'Recents';
-          titleEl.dataset.ytmlRenamed = 'true';
-        }
-
-        // Inject 4-square grid button in header if not already present
-        const header = shelf.querySelector('ytmusic-carousel-shelf-basic-header-renderer') || titleEl?.parentElement;
-        if (header && !header.querySelector('.ytm-recents-grid-icon')) {
-          const gridIcon = document.createElement('div');
-          gridIcon.className = 'ytm-recents-grid-icon';
-          gridIcon.title = 'Grid View';
-          gridIcon.innerHTML = `
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-              <path d="M4 4h4v4H4zm6 0h4v4h-4zm6 0h4v4h-4zM4 10h4v4H4zm6 0h4v4h-4zm6 0h4v4h-4zM4 16h4v4H4zm6 0h4v4h-4zm6 0h4v4h-4z"/>
-            </svg>
-          `;
-          header.appendChild(gridIcon);
-        }
-
-        const itemsContainer = shelf.querySelector('#items') || shelf.querySelector('.carousel-items');
-        if (itemsContainer) {
-          itemsContainer.classList.add('ytm-recents-grid');
-          itemsContainer.classList.remove('ytm-card-carousel');
-        }
-      } else if (hasCards || titleText.includes('album') || titleText.includes('single') || titleText.includes('quick pick')) {
-        // Shelf contains square cards -> ALWAYS a single clean horizontal carousel
-        shelf.classList.add('ytm-card-shelf');
-        shelf.dataset.ytmlEnhanced = 'true';
-
-        if (titleText.includes('album') || titleText.includes('single') || titleText.includes('recommended albums')) {
-          shelf.classList.add('ytm-albums-shelf');
-          if (titleEl && !titleEl.dataset.ytmlRenamed) {
-            titleEl.textContent = 'Albums & singles';
+          if ((path === '/' || path === '') && titleEl && !titleEl.dataset.ytmlRenamed) {
+            titleEl.textContent = 'Recents';
             titleEl.dataset.ytmlRenamed = 'true';
           }
-        } else if (titleText.includes('quick pick') || titleText.includes('picks')) {
-          shelf.classList.add('ytm-quick-picks-shelf');
-          if (titleEl && !titleEl.dataset.ytmlRenamed) {
-            titleEl.textContent = 'Quick picks';
-            titleEl.dataset.ytmlRenamed = 'true';
-          }
-        } else if (!foundFirstSongShelf && !titleEl?.dataset.ytmlRenamed) {
-          shelf.classList.add('ytm-albums-shelf');
-        }
 
-        const itemsContainer = shelf.querySelector('#items') || shelf.querySelector('.carousel-items');
-        if (itemsContainer) {
-          itemsContainer.classList.add('ytm-card-carousel');
-          itemsContainer.classList.remove('ytm-recents-grid');
+          const header = shelf.querySelector('ytmusic-carousel-shelf-basic-header-renderer') || titleEl?.parentElement;
+          if (header && !header.querySelector('.ytm-recents-grid-icon')) {
+            const gridIcon = document.createElement('div');
+            gridIcon.className = 'ytm-recents-grid-icon';
+            gridIcon.title = 'Grid View';
+            gridIcon.innerHTML = `
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                <path d="M4 4h4v4H4zm6 0h4v4h-4zm6 0h4v4h-4zM4 10h4v4H4zm6 0h4v4h-4zm6 0h4v4h-4zM4 16h4v4H4zm6 0h4v4h-4zm6 0h4v4h-4z"/>
+              </svg>
+            `;
+            header.appendChild(gridIcon);
+          }
+
+          const itemsContainer = shelf.querySelector('#items') || shelf.querySelector('.carousel-items');
+          if (itemsContainer) {
+            itemsContainer.classList.add('ytm-recents-grid');
+            itemsContainer.classList.remove('ytm-card-carousel');
+          }
+        } else if (hasCards || titleText.includes('album') || titleText.includes('single') || titleText.includes('quick pick') || titleText.includes('picks') || titleText.includes('release') || titleText.includes('playlist')) {
+          shelf.classList.add('ytm-card-shelf');
+          shelf.dataset.ytmlEnhanced = 'true';
+
+          if (titleText.includes('album') || titleText.includes('single') || titleText.includes('recommended albums')) {
+            shelf.classList.add('ytm-albums-shelf');
+            if ((path === '/' || path === '') && titleEl && !titleEl.dataset.ytmlRenamed) {
+              titleEl.textContent = 'Albums & singles';
+              titleEl.dataset.ytmlRenamed = 'true';
+            }
+          } else if (titleText.includes('quick pick') || titleText.includes('picks')) {
+            shelf.classList.add('ytm-quick-picks-shelf');
+            if ((path === '/' || path === '') && titleEl && !titleEl.dataset.ytmlRenamed) {
+              titleEl.textContent = 'Quick picks';
+              titleEl.dataset.ytmlRenamed = 'true';
+            }
+          } else if (!foundFirstSongShelf && !titleEl?.dataset.ytmlRenamed && (path === '/' || path === '')) {
+            shelf.classList.add('ytm-albums-shelf');
+          }
+
+          const itemsContainer = shelf.querySelector('#items') || shelf.querySelector('.carousel-items');
+          if (itemsContainer) {
+            itemsContainer.classList.add('ytm-card-carousel');
+            itemsContainer.classList.remove('ytm-recents-grid');
+          }
         }
-      }
+      });
     });
+
+    // 2. Suppress home profile / chip cloud header
+    if (path === '/' || path === '') {
+      const headerChipCloud = document.querySelector('ytmusic-browse-response #header ytmusic-chip-cloud-renderer');
+      if (headerChipCloud) headerChipCloud.style.display = 'none';
+    }
   }
 
   // ─── 5. Shell Lifecycle Initialization ──────────────────────────────────────
@@ -545,8 +550,8 @@
   function initAppleShell() {
     createTopBar();
     createSidebar();
-    updateActiveSidebarRoute(window.location.pathname);
-    enhanceHomepage();
+    updateActiveSidebarRoute(window.location.pathname + window.location.search);
+    enhanceCurrentPage();
     suppressDefaultYTPlayerPage();
   }
 
@@ -558,7 +563,7 @@
       updateDebounceTimer = null;
       initAppleShell();
       syncUserPlaylists();
-      enhanceHomepage();
+      enhanceCurrentPage();
       suppressDefaultYTPlayerPage();
     }, delay);
   }
@@ -591,7 +596,7 @@
     // Periodic gentle refresh for newly loaded browse shelves or guide playlists
     setInterval(() => {
       syncUserPlaylists();
-      enhanceHomepage();
+      enhanceCurrentPage();
       suppressDefaultYTPlayerPage();
     }, 2500);
   }
@@ -606,7 +611,8 @@
     initAppleShell,
     updateNowPlaying,
     updatePlayerState,
-    enhanceHomepage
+    enhanceHomepage: enhanceCurrentPage,
+    enhanceCurrentPage
   };
 })();
 

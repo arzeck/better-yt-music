@@ -239,6 +239,25 @@
         if (typeof value === 'number' && queueElements[value]) {
           queueElements[value].click();
         }
+      } else if (command === 'NAVIGATE') {
+        const path = value;
+        if (typeof path === 'string') {
+          const link = document.querySelector(`ytmusic-nav-bar a[href*="${path}"]`) ||
+                       document.querySelector(`ytmusic-guide-entry-renderer a[href*="${path}"]`) ||
+                       document.querySelector(`a[href="${path}"]`) ||
+                       document.querySelector(`a[href*="${path}"]`);
+          if (link) {
+            link.click();
+          } else {
+            const app = document.querySelector('ytmusic-app');
+            if (app && typeof app.navigate_ === 'function') {
+              app.navigate_(path);
+            } else {
+              history.pushState(null, '', path);
+              window.dispatchEvent(new Event('popstate'));
+            }
+          }
+        }
       }
       setTimeout(broadcastPlayerState, 50);
     }

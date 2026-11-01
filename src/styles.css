@@ -2576,3 +2576,289 @@ ytmusic-two-row-item-renderer .subtitle {
   text-overflow: ellipsis !important;
   line-height: 1.3 !important;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   5. UNIFIED APPLE MUSIC DESIGN LANGUAGE ACROSS ALL PAGES
+   (Home, Explore, Library, Search, Playlists, Albums, Artists, History, Settings)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* Unified Main Viewport for ALL Pages */
+ytmusic-app #main-panel,
+ytmusic-app [slot="main-panel"],
+ytmusic-browse-response,
+ytmusic-search-page,
+ytmusic-search-response,
+ytmusic-tabbed-search-results-renderer,
+ytmusic-settings-page {
+  background: #141414 !important;
+  color: #ffffff !important;
+}
+
+ytmusic-browse-response,
+ytmusic-search-page,
+ytmusic-search-response,
+ytmusic-tabbed-search-results-renderer,
+ytmusic-settings-page {
+  padding: 24px 40px 140px 40px !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+/* Hide native scroll arrows / buttons that overlay cards awkwardly */
+ytmusic-carousel-shelf-renderer .next-button,
+ytmusic-carousel-shelf-renderer .previous-button,
+ytmusic-carousel-shelf-renderer #right-arrow,
+ytmusic-carousel-shelf-renderer #left-arrow {
+  display: none !important;
+}
+
+/* ─── Playlist & Album Detail Page Hero (Apple Music Two-Column) ─── */
+ytmusic-responsive-header-renderer,
+ytmusic-playlist-detail-header-renderer,
+ytmusic-editable-playlist-detail-header-renderer {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: flex-end !important;
+  gap: 32px !important;
+  padding: 24px 0 36px 0 !important;
+  background: transparent !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+  margin-bottom: 24px !important;
+  width: 100% !important;
+}
+
+/* Big Hero Artwork */
+ytmusic-responsive-header-renderer ytmusic-thumbnail-renderer,
+ytmusic-responsive-header-renderer img#img,
+ytmusic-playlist-detail-header-renderer img#img,
+ytmusic-editable-playlist-detail-header-renderer img#img {
+  width: 220px !important;
+  height: 220px !important;
+  min-width: 220px !important;
+  min-height: 220px !important;
+  border-radius: 10px !important;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65) !important;
+  object-fit: cover !important;
+}
+
+/* Hero Metadata Column */
+ytmusic-responsive-header-renderer .metadata-container,
+ytmusic-playlist-detail-header-renderer .metadata,
+ytmusic-editable-playlist-detail-header-renderer .metadata {
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: flex-end !important;
+  gap: 8px !important;
+  flex: 1 !important;
+}
+
+/* Category Badge (PLAYLIST / ALBUM) */
+ytmusic-responsive-header-renderer .strapline,
+ytmusic-responsive-header-renderer .subtitle-badge {
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.08em !important;
+  color: rgba(255, 255, 255, 0.55) !important;
+}
+
+/* Main Hero Title */
+ytmusic-responsive-header-renderer h2.title,
+ytmusic-responsive-header-renderer .title,
+ytmusic-playlist-detail-header-renderer .title,
+ytmusic-editable-playlist-detail-header-renderer .title {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif !important;
+  font-size: 34px !important;
+  font-weight: 800 !important;
+  line-height: 1.16 !important;
+  letter-spacing: -0.025em !important;
+  color: #ffffff !important;
+  margin: 0 !important;
+}
+
+/* Hero Byline / Description */
+ytmusic-responsive-header-renderer .byline-container,
+ytmusic-responsive-header-renderer .description {
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  color: rgba(255, 255, 255, 0.65) !important;
+  line-height: 1.4 !important;
+}
+
+/* Hero Action Buttons (Play, Shuffle, More) */
+ytmusic-responsive-header-renderer .actions,
+ytmusic-playlist-detail-header-renderer .action-buttons {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  margin-top: 12px !important;
+}
+
+/* Play button pill */
+ytmusic-responsive-header-renderer .play-button yt-button-shape button,
+ytmusic-responsive-header-renderer yt-button-shape[aria-label*="Play"] button,
+ytmusic-responsive-header-renderer yt-button-shape[aria-label*="play"] button {
+  background: #ffffff !important;
+  color: #000000 !important;
+  font-weight: 700 !important;
+  border-radius: 20px !important;
+  padding: 8px 24px !important;
+  transition: transform 0.15s ease, opacity 0.15s ease !important;
+}
+
+ytmusic-responsive-header-renderer .play-button yt-button-shape button:hover {
+  transform: scale(1.03) !important;
+  opacity: 0.95 !important;
+}
+
+/* ─── Artist Page (Apple Music Hero & Sections) ─── */
+ytmusic-immersive-header-renderer,
+ytmusic-visual-header-renderer {
+  position: relative !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: flex-end !important;
+  padding: 36px 0 !important;
+  background: transparent !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+  margin-bottom: 24px !important;
+}
+
+ytmusic-immersive-header-renderer .title,
+ytmusic-visual-header-renderer .title {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif !important;
+  font-size: 40px !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.03em !important;
+  color: #ffffff !important;
+  line-height: 1.1 !important;
+}
+
+/* Circular Artist Cards */
+ytmusic-two-row-item-renderer[card-type*="ARTIST"],
+ytmusic-two-row-item-renderer:has(img[style*="border-radius: 50%"]),
+ytmusic-two-row-item-renderer .circular-thumbnail img#img {
+  border-radius: 50% !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5) !important;
+}
+
+/* ─── Explore Page (Categories & Moods Grid) ─── */
+/* Category Pills (New releases, Charts, Moods & genres) */
+ytmusic-navigation-button-renderer {
+  border-radius: 20px !important;
+  background: #202020 !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  padding: 10px 20px !important;
+  transition: all 0.2s ease !important;
+}
+
+ytmusic-navigation-button-renderer:hover {
+  background: #2a2a2a !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+  transform: translateY(-2px) !important;
+}
+
+ytmusic-navigation-button-renderer .title {
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  color: #ffffff !important;
+}
+
+/* Mood & Genre Tiles */
+ytmusic-genre-item-renderer,
+ytmusic-mood-item-renderer {
+  border-radius: 10px !important;
+  overflow: hidden !important;
+  transition: transform 0.2s ease !important;
+}
+
+ytmusic-genre-item-renderer:hover,
+ytmusic-mood-item-renderer:hover {
+  transform: translateY(-4px) !important;
+}
+
+/* ─── Library Page (Filter Chips & Multi-Column Grid) ─── */
+/* Filter chips (Playlists, Songs, Albums, Artists) */
+ytmusic-chip-cloud-chip-renderer {
+  border-radius: 8px !important;
+  background: #202020 !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  color: rgba(255, 255, 255, 0.75) !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  transition: all 0.15s ease !important;
+}
+
+ytmusic-chip-cloud-chip-renderer:hover {
+  background: #2c2c2c !important;
+  color: #ffffff !important;
+}
+
+ytmusic-chip-cloud-chip-renderer[is-selected] {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border-color: #ffffff !important;
+}
+
+/* Multi-column Grid for Library items */
+ytmusic-grid-renderer #items {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)) !important;
+  gap: 24px !important;
+}
+
+ytmusic-grid-renderer #items ytmusic-two-row-item-renderer {
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  margin-right: 0 !important;
+}
+
+ytmusic-grid-renderer #items ytmusic-two-row-item-renderer ytmusic-thumbnail-renderer,
+ytmusic-grid-renderer #items ytmusic-two-row-item-renderer img#img {
+  width: 100% !important;
+  height: auto !important;
+  aspect-ratio: 1 / 1 !important;
+}
+
+/* ─── Search Results Page ─── */
+ytmusic-tabbed-search-results-renderer #contents {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 28px !important;
+}
+
+/* Top Result Card */
+ytmusic-card-shelf-renderer {
+  background: #1a1a1a !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 12px !important;
+  padding: 18px 24px !important;
+}
+
+/* ─── History Page ─── */
+/* Group headers */
+ytmusic-browse-response[page-type="MUSIC_PAGE_TYPE_HISTORY"] h2.title {
+  color: rgba(255, 255, 255, 0.6) !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.06em !important;
+  margin: 28px 0 10px 0 !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+  padding-bottom: 6px !important;
+}
+
+/* ─── Settings Page ─── */
+ytmusic-settings-page {
+  max-width: 720px !important;
+}
+
+ytmusic-settings-page ytmusic-setting-item-renderer {
+  background: #1c1c1c !important;
+  border-radius: 10px !important;
+  margin-bottom: 8px !important;
+  padding: 14px 20px !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+}
