@@ -82,10 +82,18 @@
           let g = data[idx + 1];
           let b = data[idx + 2];
 
-          // Vibrance boost & darkness floor (from BitChord's lifted())
-          r = Math.min(255, Math.max(25, Math.round(r * 1.25)));
-          g = Math.min(255, Math.max(25, Math.round(g * 1.25)));
-          b = Math.min(255, Math.max(25, Math.round(b * 1.25)));
+          // Lift dark tones and boost saturation for a soft, glowing frosted glass look
+          const maxC = Math.max(r, g, b);
+          if (maxC < 120) {
+            const boost = (120 - maxC) * 0.75;
+            r = Math.min(255, Math.round(r + boost));
+            g = Math.min(255, Math.round(g + boost));
+            b = Math.min(255, Math.round(b + boost));
+          }
+
+          r = Math.min(255, Math.max(40, Math.round(r * 1.35)));
+          g = Math.min(255, Math.max(40, Math.round(g * 1.35)));
+          b = Math.min(255, Math.max(40, Math.round(b * 1.35)));
 
           return [r, g, b];
         });
@@ -137,24 +145,27 @@
     const { width, height } = this.canvas;
     const ctx = this.ctx;
 
-    // Dark base
-    ctx.fillStyle = '#08080c';
+    // Luminous ambient base tinted with the primary dominant colors
+    const baseR = Math.round((this.currentColors[0][0] + this.currentColors[1][0]) * 0.16);
+    const baseG = Math.round((this.currentColors[0][1] + this.currentColors[1][1]) * 0.16);
+    const baseB = Math.round((this.currentColors[0][2] + this.currentColors[1][2]) * 0.16);
+    ctx.fillStyle = `rgb(${baseR}, ${baseG}, ${baseB})`;
     ctx.fillRect(0, 0, width, height);
 
-    // Draw animated fluid radial gradient blobs
+    // Draw animated fluid radial gradient blobs with luminous gradient falloff
     this.blobs.forEach((b, i) => {
-      const col = this.currentColors[i] || [30, 20, 50];
-      const rgb = `rgb(${col[0]}, ${col[1]}, ${col[2]})`;
+      const col = this.currentColors[i] || [45, 30, 60];
 
       // Slow organic drift with sin wave breathing
-      const bx = width * (b.x + Math.sin(time * b.vx + b.phase) * 0.18);
-      const by = height * (b.y + Math.cos(time * b.vy + b.phase) * 0.18);
-      const br = Math.max(width, height) * (b.r + Math.sin(time * 0.0005 + b.phase) * 0.08);
+      const bx = width * (b.x + Math.sin(time * b.vx + b.phase) * 0.2);
+      const by = height * (b.y + Math.cos(time * b.vy + b.phase) * 0.2);
+      const br = Math.max(width, height) * (b.r + Math.sin(time * 0.0005 + b.phase) * 0.1);
 
       const grad = ctx.createRadialGradient(bx, by, br * 0.05, bx, by, br);
-      grad.addColorStop(0, rgb);
-      grad.addColorStop(0.5, `rgba(${col[0]}, ${col[1]}, ${col[2]}, 0.55)`);
-      grad.addColorStop(1, 'rgba(8, 8, 12, 0)');
+      grad.addColorStop(0, `rgba(${col[0]}, ${col[1]}, ${col[2]}, 0.9)`);
+      grad.addColorStop(0.45, `rgba(${col[0]}, ${col[1]}, ${col[2]}, 0.58)`);
+      grad.addColorStop(0.82, `rgba(${col[0]}, ${col[1]}, ${col[2]}, 0.2)`);
+      grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
 
       ctx.fillStyle = grad;
       ctx.fillRect(0, 0, width, height);

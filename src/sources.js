@@ -898,6 +898,7 @@
           source: 'Genius',
           label: 'Genius (Plain)',
           isWordSynced: false,
+          isPlain: true,
           lines
         };
       }

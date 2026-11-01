@@ -50,8 +50,31 @@
   let timingOffsetMs = 0;
   let activeSource = null;
   let availableSources = new Map();
+  let isPlainMode = false;
 
   let isFullPageOpen = false;
+  let currentModalMode = 'lyrics'; // 'lyrics' | 'player' | 'queue'
+  let currentTrackMeta = { title: '', artist: '', album: '', artwork: '' };
+  let currentQueue = [];
+  let currentPlayerState = { isPaused: true, currentTime: 0, duration: 0, volume: 1, muted: false };
+
+  let currentBackdropUrl = '';
+
+  const ALL_KNOWN_PROVIDERS = [
+    { id: 'lrc.red', name: 'lrc.red', service: 'Apple Music TTML', defaultBadge: 'Syllable Sync' },
+    { id: 'BiniLyrics', name: 'BiniLyrics', service: 'Apple Music TTML', defaultBadge: 'Syllable Sync' },
+    { id: 'BetterLyrics', name: 'BetterLyrics', service: 'Apple Music TTML', defaultBadge: 'Syllable Sync' },
+    { id: 'BetterLyricsPortato', name: 'Portato', service: 'QQ Karaoke Sync', defaultBadge: 'Syllable Sync' },
+    { id: 'PaxSenix', name: 'PaxSenix', service: 'Apple Music Sync', defaultBadge: 'Syllable Sync' },
+    { id: 'LyricsPlus', name: 'LyricsPlus', service: 'Community Syllables', defaultBadge: 'Syllable Sync' },
+    { id: 'SimpMusic', name: 'SimpMusic', service: 'YouTube Sync', defaultBadge: 'Syllable Sync' },
+    { id: 'Unison', name: 'Unison', service: 'Community Enhanced', defaultBadge: 'Syllable Sync' },
+    { id: 'LRCLIB', name: 'LRCLIB', service: 'Community Database', defaultBadge: 'Line Sync' },
+    { id: 'KuGou', name: 'KuGou', service: 'KuGou Synced', defaultBadge: 'Line Sync' },
+    { id: 'Musixmatch', name: 'Musixmatch', service: 'RichSync / Subtitles', defaultBadge: 'Line Sync' },
+    { id: 'Genius', name: 'Genius', service: 'Web Plain Text', defaultBadge: 'Plain' },
+    { id: 'YouTubeMusic', name: 'YouTube Music', service: 'Native Tab', defaultBadge: 'Plain' }
+  ];
 
   const graphemeSegmenter = typeof Intl !== 'undefined' && Intl.Segmenter
     ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
@@ -79,6 +102,187 @@
 
   // ─── 1. Full Page DOM Initialization ──────────────────────────────────────────
 
+  function formatSeconds(sec) {
+    if (!sec || isNaN(sec) || sec < 0) return '0:00';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  }
+
+  function setModalMode(mode) {
+    currentModalMode = mode;
+    const lyricsView = document.getElementById('ytm-view-lyrics');
+    const playerView = document.getElementById('ytm-view-player');
+    const queueView = document.getElementById('ytm-view-queue');
+
+    const btnLyrics = document.getElementById('ytm-ctrl-lyrics');
+    const btnQueue = document.getElementById('ytm-ctrl-queue');
+    const centerAudio = document.querySelector('.ytm-center-pill-audio');
+    const centerQueue = document.querySelector('.ytm-center-pill-queue');
+
+    if (lyricsView) lyricsView.style.display = mode === 'lyrics' ? 'flex' : 'none';
+    if (playerView) playerView.style.display = mode === 'player' ? 'flex' : 'none';
+    if (queueView) queueView.style.display = mode === 'queue' ? 'flex' : 'none';
+
+    if (btnLyrics) btnLyrics.classList.toggle('ytm-active', mode === 'lyrics');
+    if (btnQueue) btnQueue.classList.toggle('ytm-active', mode === 'queue');
+
+    if (centerAudio && centerQueue) {
+      if (mode === 'queue') {
+        centerAudio.style.display = 'none';
+        centerQueue.style.display = 'flex';
+      } else {
+        centerAudio.style.display = 'flex';
+        centerQueue.style.display = 'none';
+      }
+    }
+
+    if (mode === 'lyrics' && lastActiveIdx >= 0 && fullLineElements[lastActiveIdx]) {
+      setTimeout(() => scrollToActiveLine(fullScrollContainer, fullLineElements[lastActiveIdx]), 80);
+    }
+  }
+
+  function toggleModalMode(targetMode) {
+    if (currentModalMode === targetMode) {
+      setModalMode('player');
+    } else {
+      setModalMode(targetMode);
+    }
+  }
+
+  function updateBackdropImage(artworkUrl) {
+    if (!artworkUrl) return;
+    if (artworkUrl === currentBackdropUrl) return;
+    currentBackdropUrl = artworkUrl;
+
+    const prevEl = document.getElementById('ytm-backdrop-img-prev');
+    const currEl = document.getElementById('ytm-backdrop-img-curr');
+    if (!currEl) return;
+
+    const imgLoader = new Image();
+    imgLoader.onload = () => {
+      if (prevEl && currEl.style.backgroundImage) {
+        prevEl.style.backgroundImage = currEl.style.backgroundImage;
+        prevEl.style.opacity = '1';
+      }
+
+      currEl.style.opacity = '0';
+      currEl.style.backgroundImage = `url("${artworkUrl}")`;
+      void currEl.offsetWidth; // trigger reflow
+      currEl.style.opacity = '1';
+
+      if (prevEl) {
+        setTimeout(() => {
+          prevEl.style.opacity = '0';
+        }, 900);
+      }
+    };
+    imgLoader.src = artworkUrl;
+  }
+
+  function toggleProviderPopup(show) {
+    const popupEl = document.getElementById('ytm-provider-popup');
+    if (!popupEl) return;
+    const shouldOpen = show !== undefined ? show : !popupEl.classList.contains('ytm-popup-open');
+    if (shouldOpen) {
+      renderProviderPopup();
+      popupEl.classList.add('ytm-popup-open');
+    } else {
+      popupEl.classList.remove('ytm-popup-open');
+    }
+  }
+
+  function renderProviderPopup() {
+    const listEl = document.getElementById('ytm-provider-popup-list');
+    const countEl = document.getElementById('ytm-popup-provider-count');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+
+    let availableCount = 0;
+    const handledIds = new Set();
+
+    ALL_KNOWN_PROVIDERS.forEach(prov => {
+      handledIds.add(prov.id);
+      const res = availableSources.get(prov.id);
+      const isAvailable = Boolean(res && res.lines && res.lines.length > 0);
+      if (isAvailable) availableCount++;
+
+      const isActive = isAvailable && (activeSource === prov.id || activeSource === res?.source);
+
+      const row = document.createElement('div');
+      row.className = `ytm-provider-row ${isActive ? 'ytm-provider-active' : ''} ${!isAvailable ? 'ytm-provider-disabled' : ''}`;
+
+      let badgeHtml = '';
+      if (isAvailable) {
+        const badgeClass = res.isWordSynced ? 'ytm-provider-badge-word' : (res.isPlain ? 'ytm-provider-badge-plain' : 'ytm-provider-badge-line');
+        const badgeText = res.isWordSynced ? 'Syllable Sync' : (res.isPlain ? 'Plain' : 'Line Sync');
+        badgeHtml = `<span class="ytm-provider-badge ${badgeClass}">${badgeText}</span>`;
+      } else {
+        badgeHtml = `<span class="ytm-provider-badge ytm-provider-badge-none">No lyrics</span>`;
+      }
+
+      row.innerHTML = `
+        <div class="ytm-provider-left">
+          <div class="ytm-provider-check">${isActive ? '✓' : ''}</div>
+          <div class="ytm-provider-names">
+            <span class="ytm-provider-name">${prov.name}</span>
+            <span class="ytm-provider-sub">${isAvailable ? `${prov.service} • ${res.lines.length} lines` : prov.service}</span>
+          </div>
+        </div>
+        <div class="ytm-provider-right">
+          ${badgeHtml}
+        </div>
+      `;
+
+      if (isAvailable) {
+        row.addEventListener('click', (e) => {
+          e.stopPropagation();
+          setLyricsData(res, availableSources);
+          renderProviderPopup();
+        });
+      }
+
+      listEl.appendChild(row);
+    });
+
+    availableSources.forEach((res, srcKey) => {
+      if (handledIds.has(srcKey)) return;
+      const isAvailable = Boolean(res && res.lines && res.lines.length > 0);
+      if (isAvailable) availableCount++;
+      const isActive = activeSource === srcKey || activeSource === res?.source;
+
+      const row = document.createElement('div');
+      row.className = `ytm-provider-row ${isActive ? 'ytm-provider-active' : ''}`;
+      const badgeClass = res.isWordSynced ? 'ytm-provider-badge-word' : (res.isPlain ? 'ytm-provider-badge-plain' : 'ytm-provider-badge-line');
+      const badgeText = res.isWordSynced ? 'Syllable Sync' : (res.isPlain ? 'Plain' : 'Line Sync');
+
+      row.innerHTML = `
+        <div class="ytm-provider-left">
+          <div class="ytm-provider-check">${isActive ? '✓' : ''}</div>
+          <div class="ytm-provider-names">
+            <span class="ytm-provider-name">${res.label || srcKey}</span>
+            <span class="ytm-provider-sub">${res.lines ? `${res.lines.length} lines` : 'Custom Source'}</span>
+          </div>
+        </div>
+        <div class="ytm-provider-right">
+          <span class="ytm-provider-badge ${badgeClass}">${badgeText}</span>
+        </div>
+      `;
+
+      row.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setLyricsData(res, availableSources);
+        renderProviderPopup();
+      });
+
+      listEl.appendChild(row);
+    });
+
+    if (countEl) {
+      countEl.textContent = `${availableCount} / ${ALL_KNOWN_PROVIDERS.length} available`;
+    }
+  }
+
   function initFullLyricsPage() {
     if (document.getElementById(FULL_PAGE_ID)) return;
 
@@ -87,20 +291,34 @@
     page.className = 'ytm-apple-lyrics-page';
 
     page.innerHTML = `
-      <canvas id="ytm-lyrics-mesh-canvas" class="ytm-mesh-canvas"></canvas>
+      <div class="ytm-backdrop-wrapper">
+        <div class="ytm-backdrop-img ytm-backdrop-img-prev" id="ytm-backdrop-img-prev"></div>
+        <div class="ytm-backdrop-img ytm-backdrop-img-curr" id="ytm-backdrop-img-curr"></div>
+      </div>
+      <canvas id="ytm-lyrics-mesh-canvas" class="ytm-mesh-canvas" style="display:none;"></canvas>
       <div class="ytm-lyrics-scrim"></div>
+
+      <!-- Top drag handle pill (close modal trigger) -->
+      <div class="ytm-modal-top-handle-area">
+        <div class="ytm-modal-drag-handle" id="ytm-modal-drag-handle" title="Close (Esc)"></div>
+      </div>
 
       <div class="ytm-lyrics-header">
         <div class="ytm-header-left">
-          <button id="ytm-lyrics-close-btn" class="ytm-icon-btn" title="Close Lyrics (Esc)">
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+          <button id="ytm-lyrics-close-btn" class="ytm-icon-btn" title="Close (Esc)">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
               <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
             </svg>
           </button>
-          <span class="ytm-badge-title">Lyrics</span>
         </div>
 
         <div class="ytm-header-right">
+          <button id="ytm-lyrics-refresh-btn" class="ytm-icon-btn ytm-refresh-btn" title="Refresh & re-race all 13 lyrics providers">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+            </svg>
+          </button>
+
           <div class="ytm-offset-controls" title="Adjust lyrics timing">
             <button id="ytm-offset-minus" class="ytm-pill-btn">−</button>
             <span id="ytm-offset-val">0.0s</span>
@@ -127,32 +345,192 @@
       </div>
 
       <div class="ytm-lyrics-main-grid">
+        <!-- Left Pane: Centered Album Art + Bottom Controls Row (Images 1, 2, 4) -->
         <div class="ytm-lyrics-left-pane">
           <div class="ytm-art-wrapper">
             <img id="ytm-lyrics-art" src="" alt="Album Artwork" class="ytm-lyrics-art-img" />
             <div class="ytm-art-glow" id="ytm-art-glow"></div>
           </div>
-          <div class="ytm-track-meta">
-            <h1 id="ytm-lyrics-title" class="ytm-track-title">—</h1>
-            <h2 id="ytm-lyrics-artist" class="ytm-track-artist">—</h2>
-            <p id="ytm-lyrics-album" class="ytm-track-album"></p>
+
+          <!-- Bottom controls bar under album art -->
+          <div class="ytm-modal-bottom-controls">
+            <!-- Lyrics Mode Toggle -->
+            <button id="ytm-ctrl-lyrics" class="ytm-modal-bottom-btn ytm-active" title="Lyrics View">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                <path d="M19 2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h4l3 3 3-3h4c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-9 11.5c0 .83-.67 1.5-1.5 1.5S7 14.33 7 13.5s.67-1.5 1.5-1.5c.14 0 .27.02.4.06-.05-.88-.5-1.63-1.17-2.11l.88-1.22c1.07.77 1.79 1.98 1.88 3.37.01.13.01.27.01.4zm6 0c0 .83-.67 1.5-1.5 1.5s-1.5-.67-1.5-1.5.67-1.5 1.5-1.5c.14 0 .27.02.4.06-.05-.88-.5-1.63-1.17-2.11l.88-1.22c1.07.77 1.79 1.98 1.88 3.37.01.13.01.27.01.4z"/>
+              </svg>
+            </button>
+
+            <!-- Center Pill: Audio Output or Queue Controls -->
+            <div id="ytm-ctrl-center-pill" class="ytm-modal-center-pill">
+              <!-- Default: Audio output -->
+              <div class="ytm-center-pill-audio">
+                <div class="ytm-pill-icons">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 3a9 9 0 0 0-9 9v7c0 1.1.9 2 2 2h4v-8H5v-1a7 7 0 0 1 14 0v1h-4v8h4c1.1 0 2-.9 2-2v-7a9 9 0 0 0-9-9z"/></svg>
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                </div>
+                <span class="ytm-pill-subtext">System default</span>
+              </div>
+              <!-- In Queue Mode: Shuffle / Repeat / Autoplay -->
+              <div class="ytm-center-pill-queue" style="display: none;">
+                <button id="ytm-queue-shuffle" class="ytm-pill-mini-btn" title="Shuffle"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg></button>
+                <button id="ytm-queue-repeat" class="ytm-pill-mini-btn" title="Repeat"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg></button>
+                <button id="ytm-queue-autoplay" class="ytm-pill-mini-btn ytm-active" title="AutoPlay"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M18.6 6.62c-1.44 0-2.8.56-3.77 1.53L12 10.98l-2.83-2.83c-.97-.97-2.33-1.53-3.77-1.53-2.94 0-5.4 2.46-5.4 5.4s2.46 5.4 5.4 5.4c1.44 0 2.8-.56 3.77-1.53L12 13.02l2.83 2.83c.97.97 2.33 1.53 3.77 1.53 2.94 0 5.4-2.46 5.4-5.4s-2.46-5.4-5.4-5.4zm-13.2 8.8c-1.87 0-3.4-1.53-3.4-3.4s1.53-3.4 3.4-3.4c.91 0 1.77.35 2.39.97l2.43 2.43-2.43 2.43c-.62.62-1.48.97-2.39.97zm13.2 0c-.91 0-1.77-.35-2.39-.97l-2.43-2.43 2.43-2.43c.62-.62 1.48-.97 2.39-.97 1.87 0 3.4 1.53 3.4 3.4s-1.53 3.4-3.4 3.4z"/></svg></button>
+              </div>
+            </div>
+
+            <!-- Queue Mode Toggle -->
+            <button id="ytm-ctrl-queue" class="ytm-modal-bottom-btn" title="Queue">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/>
+              </svg>
+            </button>
           </div>
         </div>
 
-        <div class="ytm-lyrics-right-pane" id="ytm-lyrics-scroll-container">
-          <div class="ytm-lyrics-stream" id="ytm-lyrics-stream">
-            <div class="ytm-loading-state">
-              <div class="ytm-spinner"></div>
-              <p>Finding synced lyrics...</p>
+        <!-- Right Pane: Switchable Mode Views -->
+        <div class="ytm-lyrics-right-pane">
+          <!-- Mode 1: Lyrics Stream View (Image 1) -->
+          <div class="ytm-modal-view-panel ytm-view-lyrics" id="ytm-view-lyrics">
+            <div class="ytm-lyrics-scroll-container" id="ytm-lyrics-scroll-container">
+              <div class="ytm-lyrics-stream" id="ytm-lyrics-stream">
+                <div class="ytm-loading-state">
+                  <div class="ytm-spinner"></div>
+                  <p>Finding synced lyrics...</p>
+                </div>
+              </div>
+
+              <button id="ytm-resume-sync-btn" class="ytm-resume-sync-pill">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                  <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
+                </svg>
+                Resume Sync
+              </button>
+            </div>
+
+            <div class="ytm-lyrics-footer">
+              <button class="ytm-footer-icon-btn" title="Original language"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg></button>
+              <span id="ytm-lyrics-footer-source" class="ytm-footer-source" role="button" tabindex="0" title="Click to manage lyrics providers & sync">Getting the lyrics</span>
+              <button class="ytm-footer-icon-btn" title="Translate lyrics"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg></button>
+
+              <!-- Floating Lyrics Provider Manager Popover -->
+              <div id="ytm-provider-popup" class="ytm-provider-popup" role="dialog" aria-label="Lyrics Providers">
+                <div class="ytm-popup-header">
+                  <div class="ytm-popup-title-wrap">
+                    <span class="ytm-popup-title">Lyrics Providers</span>
+                    <span class="ytm-popup-count" id="ytm-popup-provider-count">13 providers</span>
+                  </div>
+                  <div class="ytm-popup-header-actions">
+                    <button id="ytm-popup-refresh-btn" class="ytm-popup-action-btn ytm-refresh-btn" title="Re-race all 13 providers">
+                      <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
+                        <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+                      </svg>
+                    </button>
+                    <button id="ytm-popup-close-btn" class="ytm-popup-action-btn" title="Close">
+                      <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
+                        <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="ytm-popup-timing-bar">
+                  <div class="ytm-popup-timing-label">Sync Offset</div>
+                  <div class="ytm-popup-timing-controls">
+                    <button id="ytm-popup-offset-minus" class="ytm-popup-pill-btn" title="-0.1s">−</button>
+                    <span id="ytm-popup-offset-val" class="ytm-popup-offset-text">0.0s</span>
+                    <button id="ytm-popup-offset-plus" class="ytm-popup-pill-btn" title="+0.1s">+</button>
+                    <button id="ytm-popup-offset-reset" class="ytm-popup-pill-btn ytm-popup-reset-btn" title="Reset offset to 0.0s">Reset</button>
+                  </div>
+                </div>
+
+                <div class="ytm-popup-list-container">
+                  <div class="ytm-popup-list" id="ytm-provider-popup-list"></div>
+                </div>
+              </div>
             </div>
           </div>
 
-          <button id="ytm-resume-sync-btn" class="ytm-resume-sync-pill">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
-              <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
-            </svg>
-            Resume Sync
-          </button>
+          <!-- Mode 2: Player Controls View (Image 2) -->
+          <div class="ytm-modal-view-panel ytm-view-player" id="ytm-view-player" style="display: none;">
+            <div class="ytm-player-view-container">
+              <div class="ytm-player-subtitle-context">Playing from Recents</div>
+
+              <div class="ytm-player-meta-row">
+                <div class="ytm-player-text-block">
+                  <h1 id="ytm-player-view-title" class="ytm-player-view-title">—</h1>
+                  <h2 id="ytm-player-view-artist" class="ytm-player-view-artist">—</h2>
+                </div>
+                <div class="ytm-player-action-btns">
+                  <button id="ytm-player-view-like-btn" class="ytm-round-glass-btn" title="Like track"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></button>
+                  <button id="ytm-player-view-more-btn" class="ytm-round-glass-btn" title="More options"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6 10c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm12 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm-6 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg></button>
+                </div>
+              </div>
+
+              <!-- Mini Lyrics preview pill (click flips to lyrics mode!) -->
+              <div class="ytm-player-lyrics-preview" id="ytm-player-view-lyrics-preview" title="View Full Lyrics">
+                <span id="ytm-player-lyrics-preview-text">Lyrics sync ready...</span>
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+              </div>
+
+              <!-- Timeline Seekbar -->
+              <div class="ytm-player-timeline-block">
+                <div class="ytm-player-times-row">
+                  <span id="ytm-player-time-current">0:00</span>
+                  <span class="ytm-high-quality-badge"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M12 3a9 9 0 0 0-9 9v7c0 1.1.9 2 2 2h4v-8H5v-1a7 7 0 0 1 14 0v1h-4v8h4c1.1 0 2-.9 2-2v-7a9 9 0 0 0-9-9z"/></svg> High quality</span>
+                  <span id="ytm-player-time-remaining">-0:00</span>
+                </div>
+                <div class="ytm-seekbar-wrapper">
+                  <input type="range" id="ytm-player-seekbar" min="0" max="100" value="0" class="ytm-apple-slider" />
+                </div>
+              </div>
+
+              <!-- Playback Transport Controls -->
+              <div class="ytm-player-transport-row">
+                <button id="ytm-player-ctrl-prev" class="ytm-transport-btn" title="Previous Track"><svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg></button>
+                <button id="ytm-player-ctrl-play" class="ytm-play-big-btn" title="Play / Pause"><svg id="ytm-play-icon-svg" viewBox="0 0 24 24" width="44" height="44" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg></button>
+                <button id="ytm-player-ctrl-next" class="ytm-transport-btn" title="Next Track"><svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg></button>
+              </div>
+
+              <!-- Volume Control Slider -->
+              <div class="ytm-player-volume-row">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="rgba(255,255,255,0.6)"><path d="M7 9v6h4l5 5V4L11 9H7z"/></svg>
+                <div class="ytm-volume-slider-wrapper">
+                  <input type="range" id="ytm-player-volume-slider" min="0" max="1" step="0.01" value="1" class="ytm-apple-slider" />
+                </div>
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="rgba(255,255,255,0.6)"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+              </div>
+            </div>
+          </div>
+
+          <!-- Mode 3: Queue View (Image 4) -->
+          <div class="ytm-modal-view-panel ytm-view-queue" id="ytm-view-queue" style="display: none;">
+            <div class="ytm-queue-view-container">
+              <h2 class="ytm-queue-header-title">Queue</h2>
+
+              <div class="ytm-queue-section-label">Now playing</div>
+              <div class="ytm-queue-now-playing-card" id="ytm-queue-now-card">
+                <img id="ytm-queue-now-img" class="ytm-queue-thumb" src="" alt="" />
+                <div class="ytm-queue-item-meta">
+                  <div id="ytm-queue-now-title" class="ytm-queue-item-title">—</div>
+                  <div id="ytm-queue-now-artist" class="ytm-queue-item-artist">—</div>
+                </div>
+                <div class="ytm-queue-playing-bars">
+                  <span></span><span></span><span></span>
+                </div>
+              </div>
+
+              <div class="ytm-queue-autoplay-header">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="rgba(255,255,255,0.7)"><path d="M18.6 6.62c-1.44 0-2.8.56-3.77 1.53L12 10.98l-2.83-2.83c-.97-.97-2.33-1.53-3.77-1.53-2.94 0-5.4 2.46-5.4 5.4s2.46 5.4 5.4 5.4c1.44 0 2.8-.56 3.77-1.53L12 13.02l2.83 2.83c.97.97 2.33 1.53 3.77 1.53 2.94 0 5.4-2.46 5.4-5.4s-2.46-5.4-5.4-5.4zm-13.2 8.8c-1.87 0-3.4-1.53-3.4-3.4s1.53-3.4 3.4-3.4c.91 0 1.77.35 2.39.97l2.43 2.43-2.43 2.43c-.62.62-1.48.97-2.39.97zm13.2 0c-.91 0-1.77-.35-2.39-.97l-2.43-2.43 2.43-2.43c.62-.62 1.48-.97 2.39-.97 1.87 0 3.4 1.53 3.4 3.4s-1.53 3.4-3.4 3.4z"/></svg>
+                <span class="ytm-queue-autoplay-title">AutoPlay</span>
+                <span class="ytm-queue-autoplay-desc">Similar music, selected to play next</span>
+              </div>
+
+              <div class="ytm-queue-list-scroll" id="ytm-queue-items-container">
+                <!-- Dynamically populated queue items -->
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     `;
@@ -172,12 +550,187 @@
     bindFullPageEvents();
   }
 
-  function bindFullPageEvents() {
-    document.getElementById('ytm-lyrics-close-btn').addEventListener('click', closeFullLyricsPage);
+  function sendPlayerCommand(command, value) {
+    window.postMessage({
+      source: 'ytml-isolated',
+      type: 'PLAYER_COMMAND',
+      payload: { command, value }
+    }, '*');
+  }
 
+  function bindFullPageEvents() {
+    // Top drag handle & close buttons
+    const handleEl = document.getElementById('ytm-modal-drag-handle');
+    if (handleEl) handleEl.addEventListener('click', closeFullLyricsPage);
+
+    const handleArea = document.querySelector('.ytm-modal-top-handle-area');
+    if (handleArea) handleArea.addEventListener('click', closeFullLyricsPage);
+
+    const closeBtn = document.getElementById('ytm-lyrics-close-btn');
+    if (closeBtn) closeBtn.addEventListener('click', closeFullLyricsPage);
+
+    // Left pane bottom controls row
+    const btnLyrics = document.getElementById('ytm-ctrl-lyrics');
+    if (btnLyrics) btnLyrics.addEventListener('click', () => toggleModalMode('lyrics'));
+
+    const btnQueue = document.getElementById('ytm-ctrl-queue');
+    if (btnQueue) btnQueue.addEventListener('click', () => toggleModalMode('queue'));
+
+    // Center pill queue buttons
+    const btnShuffle = document.getElementById('ytm-queue-shuffle');
+    if (btnShuffle) {
+      btnShuffle.addEventListener('click', () => {
+        const nativeShuffle = document.querySelector('ytmusic-player-bar .shuffle') ||
+                              document.querySelector('ytmusic-player-bar [aria-label*="Shuffle"]') ||
+                              document.querySelector('ytmusic-player-bar [aria-label*="shuffle"]');
+        if (nativeShuffle) nativeShuffle.click();
+        btnShuffle.classList.toggle('ytm-active');
+      });
+    }
+
+    const btnRepeat = document.getElementById('ytm-queue-repeat');
+    if (btnRepeat) {
+      btnRepeat.addEventListener('click', () => {
+        const nativeRepeat = document.querySelector('ytmusic-player-bar .repeat') ||
+                             document.querySelector('ytmusic-player-bar [aria-label*="Repeat"]') ||
+                             document.querySelector('ytmusic-player-bar [aria-label*="repeat"]');
+        if (nativeRepeat) nativeRepeat.click();
+        btnRepeat.classList.toggle('ytm-active');
+      });
+    }
+
+    const btnAutoplay = document.getElementById('ytm-queue-autoplay');
+    if (btnAutoplay) {
+      btnAutoplay.addEventListener('click', () => {
+        btnAutoplay.classList.toggle('ytm-active');
+      });
+    }
+
+    // Player View: Mini Lyrics preview flips to lyrics view
+    const previewEl = document.getElementById('ytm-player-view-lyrics-preview');
+    if (previewEl) {
+      previewEl.addEventListener('click', () => setModalMode('lyrics'));
+    }
+
+    // Player View transport buttons
+    const playBtn = document.getElementById('ytm-player-ctrl-play');
+    if (playBtn) playBtn.addEventListener('click', () => sendPlayerCommand('TOGGLE_PLAY'));
+
+    const prevBtn = document.getElementById('ytm-player-ctrl-prev');
+    if (prevBtn) prevBtn.addEventListener('click', () => sendPlayerCommand('PREV'));
+
+    const nextBtn = document.getElementById('ytm-player-ctrl-next');
+    if (nextBtn) nextBtn.addEventListener('click', () => sendPlayerCommand('NEXT'));
+
+    const likeBtn = document.getElementById('ytm-player-view-like-btn');
+    if (likeBtn) likeBtn.addEventListener('click', () => sendPlayerCommand('TOGGLE_LIKE'));
+
+    // Seekbar
+    const seekbar = document.getElementById('ytm-player-seekbar');
+    if (seekbar) {
+      seekbar.addEventListener('input', () => {
+        const curTimeEl = document.getElementById('ytm-player-time-current');
+        const remTimeEl = document.getElementById('ytm-player-time-remaining');
+        const curSec = Number(seekbar.value);
+        const durSec = Number(seekbar.max) || 0;
+        if (curTimeEl) curTimeEl.textContent = formatSeconds(curSec);
+        if (remTimeEl) remTimeEl.textContent = '-' + formatSeconds(Math.max(0, durSec - curSec));
+        const pct = durSec > 0 ? (curSec / durSec) * 100 : 0;
+        seekbar.style.setProperty('--ytm-slider-fill', `${pct.toFixed(1)}%`);
+      });
+      seekbar.addEventListener('change', () => {
+        sendPlayerCommand('SEEK', Number(seekbar.value));
+      });
+    }
+
+    // Volume slider
+    const volumeSlider = document.getElementById('ytm-player-volume-slider');
+    if (volumeSlider) {
+      volumeSlider.addEventListener('input', () => {
+        const val = Number(volumeSlider.value);
+        sendPlayerCommand('SET_VOLUME', val);
+        volumeSlider.style.setProperty('--ytm-slider-fill', `${(val * 100).toFixed(1)}%`);
+      });
+    }
+
+    const refreshBtn = document.getElementById('ytm-lyrics-refresh-btn');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', () => {
+        window.dispatchEvent(new CustomEvent('ytml:retry-search'));
+      });
+    }
+
+    // Escape closes provider popup if open, else closes full page
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && isFullPageOpen) closeFullLyricsPage();
-    });
+      if (e.key === 'Escape') {
+        const popupEl = document.getElementById('ytm-provider-popup');
+        if (popupEl && popupEl.classList.contains('ytm-popup-open')) {
+          e.stopPropagation();
+          toggleProviderPopup(false);
+          return;
+        }
+        if (isFullPageOpen) closeFullLyricsPage();
+      }
+    }, true);
+
+    // Lyrics Footer Source -> Toggles Lyrics Provider Management Popover
+    const footerSrcEl = document.getElementById('ytm-lyrics-footer-source');
+    if (footerSrcEl) {
+      footerSrcEl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleProviderPopup();
+      });
+    }
+
+    const popupCloseBtn = document.getElementById('ytm-popup-close-btn');
+    if (popupCloseBtn) {
+      popupCloseBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleProviderPopup(false);
+      });
+    }
+
+    const popupRefreshBtn = document.getElementById('ytm-popup-refresh-btn');
+    if (popupRefreshBtn) {
+      popupRefreshBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setRefreshSpinning(true);
+        if (footerSrcEl) footerSrcEl.textContent = 'Getting the lyrics...';
+        showLoadingState();
+        window.dispatchEvent(new CustomEvent('ytml:retry-search'));
+      });
+    }
+
+    const popupMinusBtn = document.getElementById('ytm-popup-offset-minus');
+    if (popupMinusBtn) {
+      popupMinusBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        adjustOffset(-100);
+      });
+    }
+
+    const popupPlusBtn = document.getElementById('ytm-popup-offset-plus');
+    if (popupPlusBtn) {
+      popupPlusBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        adjustOffset(100);
+      });
+    }
+
+    const popupResetBtn = document.getElementById('ytm-popup-offset-reset');
+    if (popupResetBtn) {
+      popupResetBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        resetOffset();
+      });
+    }
+
+    const providerPopupEl = document.getElementById('ytm-provider-popup');
+    if (providerPopupEl) {
+      providerPopupEl.addEventListener('click', (e) => {
+        e.stopPropagation();
+      });
+    }
 
     document.getElementById('ytm-fullscreen-btn').addEventListener('click', () => {
       if (!document.fullscreenElement) {
@@ -208,9 +761,16 @@
       }
     });
 
-    document.addEventListener('click', () => {
+    document.addEventListener('click', (e) => {
       if (fullSourceDropdownEl) fullSourceDropdownEl.classList.remove('ytm-dropdown-open');
       if (tabSourceDropdownEl) tabSourceDropdownEl.classList.remove('ytm-dropdown-open');
+      const popupEl = document.getElementById('ytm-provider-popup');
+      if (popupEl && popupEl.classList.contains('ytm-popup-open')) {
+        const footerEl = document.getElementById('ytm-lyrics-footer-source');
+        if (!popupEl.contains(e.target) && e.target !== footerEl && !footerEl?.contains(e.target)) {
+          toggleProviderPopup(false);
+        }
+      }
     });
   }
 
@@ -220,14 +780,14 @@
     let target = document.querySelector('ytmusic-tab-renderer[page-type="MUSIC_PAGE_TYPE_TRACK_LYRICS"]');
     if (target) return target;
 
+    const customRenderer = document.querySelector('.ytm-custom-lyrics-tab-renderer');
+    if (customRenderer) return customRenderer;
+
     const shelf = document.querySelector('ytmusic-description-shelf-renderer');
     if (shelf) {
       target = shelf.closest('ytmusic-tab-renderer') || shelf.parentElement;
       if (target) return target;
     }
-
-    const customRenderer = document.querySelector('.ytm-custom-lyrics-tab-renderer');
-    if (customRenderer) return customRenderer;
 
     const tabRendererContainer = document.querySelector('ytmusic-player-page #tab-renderer') ||
                                  document.querySelector('#tab-renderer');
@@ -235,10 +795,21 @@
       target = tabRendererContainer.querySelector('[page-type="MUSIC_PAGE_TYPE_TRACK_LYRICS"]');
       if (target) return target;
 
-      const renderers = tabRendererContainer.children;
-      if (renderers.length >= 2) {
-        return renderers[1];
+      const existing = tabRendererContainer.querySelector('.ytm-custom-lyrics-tab-renderer');
+      if (existing) return existing;
+
+      // Create a dedicated custom lyrics tab renderer!
+      const newRenderer = document.createElement('div');
+      newRenderer.className = 'ytm-custom-lyrics-tab-renderer style-scope ytmusic-player-page';
+      newRenderer.setAttribute('page-type', 'MUSIC_PAGE_TYPE_TRACK_LYRICS');
+      newRenderer.style.cssText = 'width: 100%; height: 100%; display: flex; flex-direction: column; overflow: hidden;';
+
+      if (tabRendererContainer.children.length > 1) {
+        tabRendererContainer.insertBefore(newRenderer, tabRendererContainer.children[1]);
+      } else {
+        tabRendererContainer.appendChild(newRenderer);
       }
+      return newRenderer;
     }
     return null;
   }
@@ -256,8 +827,10 @@
     const existingTabView = document.getElementById(TAB_VIEW_ID);
     if (existingTabView) {
       if (existingTabView.parentElement === tabTarget) {
-        if (currentLines.length > 0 && tabStreamEl && tabLineElements.length === 0) {
-          renderLyricsStreamInto(tabStreamEl, tabLineElements, 'tab');
+        if (currentLines.length > 0 && tabStreamEl) {
+          if (tabLineElements.length === 0 || tabStreamEl.querySelectorAll('.ytm-lyric-row').length === 0) {
+            renderLyricsStreamInto(tabStreamEl, tabLineElements, 'tab');
+          }
         }
         return;
       }
@@ -274,6 +847,13 @@
     tabView.innerHTML = `
       <div class="ytm-tab-header">
         <div class="ytm-tab-header-left">
+          <button id="ytm-tab-refresh-btn" class="ytm-pill-btn ytm-btn-compact ytm-refresh-btn" title="Refresh & re-race all 13 lyrics providers">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor">
+              <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+            </svg>
+            <span>Retry</span>
+          </button>
+
           <div class="ytm-source-selector">
             <button id="ytm-tab-source-btn" class="ytm-source-btn ytm-btn-compact">
               <span id="ytm-tab-source-label">Auto</span>
@@ -342,6 +922,14 @@
       openFullLyricsPage();
     });
 
+    const tabRefreshBtn = document.getElementById('ytm-tab-refresh-btn');
+    if (tabRefreshBtn) {
+      tabRefreshBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        window.dispatchEvent(new CustomEvent('ytml:retry-search'));
+      });
+    }
+
     const srcBtn = document.getElementById('ytm-tab-source-btn');
     srcBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -399,6 +987,8 @@
     const text = `${timingOffsetMs > 0 ? '+' : ''}${sec}s`;
     if (fullOffsetDisplayEl) fullOffsetDisplayEl.textContent = text;
     if (tabOffsetDisplayEl) tabOffsetDisplayEl.textContent = text;
+    const popupOffsetEl = document.getElementById('ytm-popup-offset-val');
+    if (popupOffsetEl) popupOffsetEl.textContent = text;
   }
 
   // ─── 3. Lyrics Rendering & DOM Construction ──────────────────────────────────
@@ -408,17 +998,32 @@
     streamEl.innerHTML = '';
     lineElementsArr.length = 0;
 
-    const topSpacer = document.createElement('div');
-    topSpacer.className = 'ytm-stream-spacer';
-    streamEl.appendChild(topSpacer);
+    if (!isPlainMode) {
+      const topSpacer = document.createElement('div');
+      topSpacer.className = 'ytm-stream-spacer';
+      streamEl.appendChild(topSpacer);
+    }
 
     currentLines.forEach((line, idx) => {
+      const align = (line.alignment || 'start').toLowerCase();
       const lineRow = document.createElement('div');
-      lineRow.className = `ytm-lyric-row ytm-align-${line.alignment.toLowerCase()} ${mode === 'tab' ? 'ytm-tab-row' : ''}`;
+      lineRow.className = `ytm-lyric-row ytm-align-${align} ${mode === 'tab' ? 'ytm-tab-row' : ''} ${isPlainMode ? 'ytm-plain-row' : ''}`;
       lineRow.dataset.index = idx;
-      lineRow.dataset.timeMs = line.timeMs;
+      lineRow.dataset.timeMs = line.timeMs || 0;
 
-      if (line.isGap) {
+      if (isPlainMode) {
+        // Plain unsynced lyrics: all lines clearly readable, 0% blur, no timing animations
+        lineRow.style.filter = 'none';
+        lineRow.style.opacity = '0.92';
+
+        const leadEl = document.createElement('div');
+        leadEl.className = 'ytm-lead-vocal';
+        const textSpan = document.createElement('span');
+        textSpan.className = 'ytm-line-text';
+        textSpan.textContent = line.text;
+        leadEl.appendChild(textSpan);
+        lineRow.appendChild(leadEl);
+      } else if (line.isGap) {
         lineRow.classList.add('ytm-gap-row');
         lineRow.innerHTML = `
           <div class="ytm-gap-dots">
@@ -496,9 +1101,11 @@
       lineElementsArr.push(lineRow);
     });
 
-    const botSpacer = document.createElement('div');
-    botSpacer.className = 'ytm-stream-spacer';
-    streamEl.appendChild(botSpacer);
+    if (!isPlainMode) {
+      const botSpacer = document.createElement('div');
+      botSpacer.className = 'ytm-stream-spacer';
+      streamEl.appendChild(botSpacer);
+    }
   }
 
   function seekToTimestamp(targetMs) {
@@ -524,6 +1131,10 @@
   }
 
   function tick() {
+    if (isPlainMode) {
+      stopRafLoop();
+      return;
+    }
     rafId = requestAnimationFrame(tick);
     if (currentLines.length === 0) return;
 
@@ -535,6 +1146,7 @@
   }
 
   function updateHighlight(posMs) {
+    if (isPlainMode) return;
     let activeIdx = -1;
     for (let i = 0; i < currentLines.length; i++) {
       if (currentLines[i].timeMs <= posMs) {
@@ -563,6 +1175,12 @@
       // Auto-scroll tab view
       if (!isTabUserScrolling && tabLineElements[activeIdx]) {
         scrollToActiveLine(tabScrollContainer, tabLineElements[activeIdx]);
+      }
+
+      // Update Mini Lyrics preview row in Player view
+      const previewTextEl = document.getElementById('ytm-player-lyrics-preview-text');
+      if (previewTextEl && currentLines[activeIdx]) {
+        previewTextEl.textContent = currentLines[activeIdx].text || '...';
       }
     }
   }
@@ -619,9 +1237,9 @@
       const n = charSpans.length || 1;
 
       if (isPast) {
-        // Word completed — settled white at normal size
+        // Word completed — settled white at normal baseline
         span.style.opacity   = '1';
-        span.style.transform = 'scale(1)';
+        span.style.transform = 'translateY(0)';
         span.style.filter    = 'none';
         charSpans.forEach(cs => {
           cs.style.setProperty('--ytm-char-fill', '1');
@@ -631,13 +1249,13 @@
         const elapsed  = posMs - word.startMs;
         const progress = Math.min(1, elapsed / duration); // 0 → 1
 
-        // Active word size increase: gently swells up while being sung with a soft bloom aura
-        const swell = Math.sin(progress * Math.PI); // smooth 0 -> 1 -> 0 arc
-        const scale = 1.0 + swell * 0.055; // up to ~1.055x subtle size increase
+        // Whole-word vertical lift: the word lifts up smoothly as a single unit (no size scaling)
+        const lift = line.wordLift ? line.wordLift(i, posMs) : Math.sin(progress * Math.PI);
+        const translateY = -(lift * 4); // ~4px vertical lift for the entire word
 
         span.style.opacity   = '1';
-        span.style.transform = `scale(${scale.toFixed(3)})`;
-        span.style.filter    = 'drop-shadow(0 0 12px rgba(255, 255, 255, 0.45))';
+        span.style.transform = `translateY(${translateY.toFixed(2)}px)`;
+        span.style.filter    = 'drop-shadow(0 0 10px rgba(255, 255, 255, 0.45))';
 
         charSpans.forEach((cs, ci) => {
           // Fill sweeps left-to-right across characters
@@ -650,7 +1268,7 @@
       } else {
         // Future word
         span.style.opacity   = '0.28';
-        span.style.transform = 'scale(1)';
+        span.style.transform = 'translateY(0)';
         span.style.filter    = 'none';
         charSpans.forEach(cs => {
           cs.style.setProperty('--ytm-char-fill', '0');
@@ -712,24 +1330,16 @@
       return;
     }
 
-    // Dynamic progressive blur: increases continuously the farther the lyrics are from active line
-    // dist 1 (immediate neighbors): gentle camera blur ~2.5px
-    // dist 2: noticeable blur ~5.5px
-    // dist 3: deep atmospheric blur ~9.5px
-    // dist 4: ~14.5px
-    // dist 5+: heavy depth-of-field melt up to ~24px
-    const blur = dist === 1 ? 2.5
-               : dist === 2 ? 5.5
-               : dist === 3 ? 9.5
-               : dist === 4 ? 14.5
-               : Math.min(24.0, 14.5 + (dist - 4) * 3.5);
+    // Subtle Apple Music depth-of-field: gentle lens softening that keeps upcoming lyrics readable
+    const blur = dist === 1 ? 0.7
+               : dist === 2 ? 1.5
+               : dist === 3 ? 2.4
+               : Math.min(3.8, 2.4 + (dist - 3) * 0.5);
 
-    // Opacity falls off smoothly with distance
-    const opacity = dist === 1 ? 0.65
-                  : dist === 2 ? 0.42
-                  : dist === 3 ? 0.28
-                  : dist === 4 ? 0.18
-                  : Math.max(0.08, 0.18 - (dist - 4) * 0.03);
+    const opacity = dist === 1 ? 0.70
+                  : dist === 2 ? 0.52
+                  : dist === 3 ? 0.38
+                  : Math.max(0.22, 0.38 - (dist - 3) * 0.04);
 
     rowEl.style.filter  = `blur(${blur.toFixed(1)}px)`;
     rowEl.style.opacity = opacity.toFixed(2);
@@ -750,14 +1360,24 @@
 
   // ─── 5. Public Controls & Lifecycle ──────────────────────────────────────────
 
-  function openFullLyricsPage() {
+  function openFullLyricsPage(initialMode) {
     initFullLyricsPage();
+    if (initialMode) {
+      setModalMode(initialMode);
+    }
     isFullPageOpen = true;
     fullPageEl.classList.add('ytm-page-open');
     document.body.classList.add('ytm-lyrics-open');
-    meshBackdrop.start();
-    startRafLoop();
+    if (currentTrackMeta.artwork) {
+      updateBackdropImage(currentTrackMeta.artwork);
+    }
+    if (meshBackdrop) meshBackdrop.start();
+    if (!isPlainMode) {
+      startRafLoop();
+    }
     chrome.storage.local.set({ lyricsPageOpen: true });
+    window.postMessage({ source: 'ytml-isolated', type: 'REQUEST_QUEUE' }, '*');
+    window.postMessage({ source: 'ytml-isolated', type: 'REQUEST_TRACK' }, '*');
   }
 
   function closeFullLyricsPage() {
@@ -772,27 +1392,115 @@
     chrome.storage.local.set({ lyricsPageOpen: false });
   }
 
-  function toggleFullLyricsPage() {
-    if (isFullPageOpen) closeFullLyricsPage();
-    else openFullLyricsPage();
+  function toggleFullLyricsPage(initialMode) {
+    if (isFullPageOpen) {
+      if (initialMode && currentModalMode !== initialMode) {
+        setModalMode(initialMode);
+      } else {
+        closeFullLyricsPage();
+      }
+    } else {
+      openFullLyricsPage(initialMode);
+    }
   }
 
   function updateTrackMeta(meta) {
+    currentTrackMeta = { ...currentTrackMeta, ...meta };
     initFullLyricsPage();
     mountLyricsInTab();
 
     const artImg = document.getElementById('ytm-lyrics-art');
-    const titleEl = document.getElementById('ytm-lyrics-title');
-    const artistEl = document.getElementById('ytm-lyrics-artist');
-    const albumEl = document.getElementById('ytm-lyrics-album');
+    const playerTitle = document.getElementById('ytm-player-view-title');
+    const playerArtist = document.getElementById('ytm-player-view-artist');
+    const queueTitle = document.getElementById('ytm-queue-now-title');
+    const queueArtist = document.getElementById('ytm-queue-now-artist');
+    const queueImg = document.getElementById('ytm-queue-now-img');
 
     if (meta.artwork && artImg) {
       artImg.src = meta.artwork;
-      meshBackdrop.sampleFromImage(artImg);
+      updateBackdropImage(meta.artwork);
+      if (meshBackdrop) meshBackdrop.sampleFromImage(artImg);
     }
-    if (titleEl) titleEl.textContent = meta.title || '—';
-    if (artistEl) artistEl.textContent = meta.artist || '—';
-    if (albumEl) albumEl.textContent = meta.album || '';
+    if (playerTitle) playerTitle.textContent = meta.title || '—';
+    if (playerArtist) playerArtist.textContent = meta.artist || '—';
+    if (queueTitle) queueTitle.textContent = meta.title || '—';
+    if (queueArtist) queueArtist.textContent = meta.artist || '—';
+    if (queueImg && meta.artwork) queueImg.src = meta.artwork;
+  }
+
+  function updatePlayerState(state) {
+    currentPlayerState = { ...currentPlayerState, ...state };
+
+    const playBtnSvg = document.getElementById('ytm-play-icon-svg');
+    if (playBtnSvg) {
+      if (currentPlayerState.isPaused) {
+        playBtnSvg.innerHTML = '<path d="M8 5v14l11-7z"/>';
+      } else {
+        playBtnSvg.innerHTML = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
+      }
+    }
+
+    const curTimeEl = document.getElementById('ytm-player-time-current');
+    const remTimeEl = document.getElementById('ytm-player-time-remaining');
+    const seekbar = document.getElementById('ytm-player-seekbar');
+
+    const curSec = currentPlayerState.currentTime || 0;
+    const durSec = currentPlayerState.duration || 0;
+    const remSec = Math.max(0, durSec - curSec);
+
+    if (curTimeEl) curTimeEl.textContent = formatSeconds(curSec);
+    if (remTimeEl) remTimeEl.textContent = '-' + formatSeconds(remSec);
+
+    if (seekbar && !seekbar.matches(':active')) {
+      seekbar.max = durSec > 0 ? String(durSec) : '100';
+      seekbar.value = String(curSec);
+      const pct = durSec > 0 ? (curSec / durSec) * 100 : 0;
+      seekbar.style.setProperty('--ytm-slider-fill', `${pct.toFixed(1)}%`);
+    }
+
+    const volSlider = document.getElementById('ytm-player-volume-slider');
+    if (volSlider && !volSlider.matches(':active')) {
+      volSlider.value = String(currentPlayerState.volume ?? 1);
+      const vPct = (Number(volSlider.value) * 100).toFixed(1);
+      volSlider.style.setProperty('--ytm-slider-fill', `${vPct}%`);
+    }
+  }
+
+  function updateQueue(queueItems) {
+    currentQueue = Array.isArray(queueItems) ? queueItems : [];
+    const container = document.getElementById('ytm-queue-items-container');
+    if (!container) return;
+
+    container.innerHTML = '';
+    currentQueue.forEach((item) => {
+      const row = document.createElement('div');
+      row.className = `ytm-queue-item-row ${item.isSelected ? 'ytm-queue-item-active' : ''}`;
+      row.innerHTML = `
+        <div class="ytm-queue-drag-handle" title="Drag">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M4 9h16v2H4zm0 4h16v2H4z"/></svg>
+        </div>
+        <img class="ytm-queue-thumb" src="${item.artwork || ''}" alt="" />
+        <div class="ytm-queue-item-meta">
+          <div class="ytm-queue-item-title">${item.title}</div>
+          <div class="ytm-queue-item-artist">${item.artist}</div>
+        </div>
+        <button class="ytm-queue-remove-btn" title="Remove from queue">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      `;
+
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('.ytm-queue-remove-btn')) {
+          e.stopPropagation();
+          row.style.opacity = '0';
+          setTimeout(() => row.remove(), 200);
+          return;
+        }
+        sendPlayerCommand('PLAY_QUEUE_INDEX', item.index);
+      });
+
+      container.appendChild(row);
+    });
   }
 
   function syncDomReferences() {
@@ -812,7 +1520,24 @@
     activeSource = activeResult?.source || null;
     availableSources = allResultsMap || new Map();
 
+    isPlainMode = Boolean(
+      activeResult?.isPlain ||
+      (!activeResult?.isWordSynced && (!activeResult?.lines || !activeResult.lines.some(l => (l.timeMs || 0) > 0)))
+    );
+
+    if (fullScrollContainer) fullScrollContainer.classList.toggle('ytm-plain-lyrics-mode', isPlainMode);
+    if (tabScrollContainer) tabScrollContainer.classList.toggle('ytm-plain-lyrics-mode', isPlainMode);
+    if (fullStreamEl) fullStreamEl.classList.toggle('ytm-plain-lyrics-stream', isPlainMode);
+    if (tabStreamEl) tabStreamEl.classList.toggle('ytm-plain-lyrics-stream', isPlainMode);
+
+    const footerSrcEl = document.getElementById('ytm-lyrics-footer-source');
+    if (footerSrcEl) {
+      const modeSuffix = isPlainMode ? ' (Plain)' : '';
+      footerSrcEl.textContent = `Lyrics by ${activeResult?.label || activeResult?.source || 'lrc.red'}${modeSuffix}`;
+    }
+
     updateSourceDropdowns();
+    renderProviderPopup();
 
     if (!activeResult || !activeResult.lines || activeResult.lines.length === 0) {
       showNoLyricsState();
@@ -825,13 +1550,32 @@
     renderLyricsStreamInto(fullStreamEl, fullLineElements, 'full');
     renderLyricsStreamInto(tabStreamEl, tabLineElements, 'tab');
 
-    startRafLoop();
+    if (isPlainMode) {
+      stopRafLoop();
+      if (fullResumeBtn) fullResumeBtn.classList.remove('ytm-pill-visible');
+      if (tabResumeBtn) tabResumeBtn.classList.remove('ytm-pill-visible');
+      if (fullScrollContainer) fullScrollContainer.scrollTop = 0;
+      if (tabScrollContainer) tabScrollContainer.scrollTop = 0;
+
+      const previewTextEl = document.getElementById('ytm-player-lyrics-preview-text');
+      if (previewTextEl && currentLines[0]) {
+        previewTextEl.textContent = currentLines[0].text || '...';
+      }
+    } else {
+      startRafLoop();
+    }
   }
 
   function showLoadingState() {
     initFullLyricsPage();
     mountLyricsInTab();
     syncDomReferences();
+
+    const footerSrcEl = document.getElementById('ytm-lyrics-footer-source');
+    if (footerSrcEl) {
+      footerSrcEl.textContent = 'Getting the lyrics';
+    }
+    renderProviderPopup();
 
     const loadingHtml = `
       <div class="ytm-loading-state">
@@ -847,6 +1591,12 @@
     initFullLyricsPage();
     mountLyricsInTab();
     syncDomReferences();
+
+    const footerSrcEl = document.getElementById('ytm-lyrics-footer-source');
+    if (footerSrcEl) {
+      footerSrcEl.textContent = 'Lyrics not found (manage providers)';
+    }
+    renderProviderPopup();
 
     const emptyHtml = `
       <div class="ytm-empty-state">
@@ -907,6 +1657,16 @@
     populateMenu(tabSourceDropdownEl);
   }
 
+  function setRefreshSpinning(spinning) {
+    document.querySelectorAll('.ytm-refresh-btn').forEach(btn => {
+      if (spinning) {
+        btn.classList.add('ytm-refreshing');
+      } else {
+        btn.classList.remove('ytm-refreshing');
+      }
+    });
+  }
+
   window.__YTMLLyricsPage = {
     openFullLyricsPage,
     closeFullLyricsPage,
@@ -914,10 +1674,14 @@
     openLyricsPage: openFullLyricsPage,
     closeLyricsPage: closeFullLyricsPage,
     toggleLyricsPage: toggleFullLyricsPage,
+    setModalMode,
+    updatePlayerState,
+    updateQueue,
     mountLyricsInTab,
     updateTrackMeta,
     setLyricsData,
     showLoadingState,
-    showNoLyricsState
+    showNoLyricsState,
+    setRefreshSpinning
   };
 })();

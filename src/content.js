@@ -33,22 +33,32 @@
     openLyricsPage,
     closeLyricsPage,
     toggleLyricsPage,
+    setModalMode,
+    updatePlayerState,
+    updateQueue,
     mountLyricsInTab,
     updateTrackMeta,
     setLyricsData,
     showLoadingState,
-    showNoLyricsState
+    showNoLyricsState,
+    setRefreshSpinning
   } = window.__YTMLLyricsPage;
 
   // ─── 1. Main World Bridge Listener ───
 
   window.addEventListener('message', (event) => {
-    if (event.source !== window) return;
-    if (event.data && event.data.source === 'ytml-main' && event.data.type === 'TRACK_CHANGE') {
+    if (event.source !== window || !event.data || event.data.source !== 'ytml-main') return;
+
+    if (event.data.type === 'TRACK_CHANGE') {
       const meta = event.data.payload;
       if (meta && (meta.title || meta.videoId)) {
         handleIncomingTrackMeta(meta);
       }
+    } else if (event.data.type === 'PLAYER_STATE') {
+      window.__YTMLLyricsPage?.updatePlayerState(event.data.payload);
+      window.__YTMLAppleUI?.updatePlayerState(event.data.payload);
+    } else if (event.data.type === 'QUEUE_UPDATE') {
+      window.__YTMLLyricsPage?.updateQueue(event.data.payload);
     }
   });
 
@@ -56,9 +66,22 @@
   window.postMessage({ source: 'ytml-isolated', type: 'REQUEST_TRACK' }, '*');
 
   window.addEventListener('ytml:retry-search', () => {
-    currentTrackKey = '';
-    window.postMessage({ source: 'ytml-isolated', type: 'REQUEST_TRACK' }, '*');
+    retryLyricsFetch();
   });
+
+  async function retryLyricsFetch() {
+    console.log('[AppleMusicLyrics] Retrying lyrics across all 13 providers...');
+    if (setRefreshSpinning) setRefreshSpinning(true);
+    showLoadingState();
+    window.__YTMLLyricsRepo?.clearCache();
+    currentTrackKey = '';
+
+    if (currentTrackMeta && (currentTrackMeta.title || currentTrackMeta.videoId)) {
+      await onSongChanged(currentTrackMeta, true);
+    } else {
+      window.postMessage({ source: 'ytml-isolated', type: 'REQUEST_TRACK' }, '*');
+    }
+  }
 
   function handleIncomingTrackMeta(meta) {
     if (!meta.title && !meta.videoId) return;
@@ -141,7 +164,7 @@
 
   // ─── 3. Song Changed Handler ───
 
-  async function onSongChanged(info) {
+  async function onSongChanged(info, forceRefresh = false) {
     if (!info || !info.title) {
       const dom = extractDomFallback();
       if (!dom.title) return;
@@ -156,15 +179,18 @@
     }
 
     const key = `${info.title}|${info.artist}|${info.videoId}|${Math.round(info.durationMs / 1000)}`;
-    if (key === currentTrackKey) return;
+    if (!forceRefresh && key === currentTrackKey) return;
     currentTrackKey = key;
     currentTrackMeta = info;
 
-    console.log(`[AppleMusicLyrics] Track detected: "${info.title}" by "${info.artist || 'Unknown'}" (${Math.round(info.durationMs / 1000)}s)`);
+    console.log(`[AppleMusicLyrics] Track detected: "${info.title}" by "${info.artist || 'Unknown'}" (${Math.round(info.durationMs / 1000)}s)${forceRefresh ? ' [FORCE REFRESH]' : ''}`);
 
     // 1. Update UI metadata and canvas palette immediately
     updateTrackMeta(info);
+    updateIslandMeta();
+    window.__YTMLAppleUI?.updateNowPlaying(info);
     showLoadingState();
+    if (setRefreshSpinning) setRefreshSpinning(true);
     ensureLyricsTabReady();
 
     // 2. Race across all 13 BitChord providers concurrently
@@ -175,7 +201,7 @@
           setLyricsData(activeResult, allResults);
           ensureLyricsTabReady();
         }
-      });
+      }, forceRefresh);
 
       if (currentTrackKey === key) {
         if (outcome && outcome.activeResult) {
@@ -192,6 +218,8 @@
       if (currentTrackKey === key) {
         showNoLyricsState();
       }
+    } finally {
+      if (setRefreshSpinning) setRefreshSpinning(false);
     }
   }
 
@@ -207,17 +235,24 @@
                       document.querySelector('#tab-renderer');
     if (!ironPages) return;
 
+    try { ironPages.selected = targetIndex; } catch (_) {}
+
     const renderers = Array.from(ironPages.children);
+    const lyricsContainer = document.querySelector('.ytm-custom-lyrics-tab-renderer') ||
+                            document.querySelector('ytmusic-tab-renderer[page-type="MUSIC_PAGE_TYPE_TRACK_LYRICS"]');
 
     if (targetIndex === 1) {
       // User clicked LYRICS tab
       renderers.forEach((r, idx) => {
-        const isLyrics = r.getAttribute('page-type') === 'MUSIC_PAGE_TYPE_TRACK_LYRICS' ||
+        const isLyrics = r === lyricsContainer ||
+                         r.getAttribute('page-type') === 'MUSIC_PAGE_TYPE_TRACK_LYRICS' ||
                          r.classList.contains('ytm-custom-lyrics-tab-renderer') ||
                          idx === 1;
         if (isLyrics) {
           r.removeAttribute('hidden');
           r.style.setProperty('display', 'flex', 'important');
+          r.style.setProperty('height', '100%', 'important');
+          r.style.setProperty('visibility', 'visible', 'important');
         } else {
           r.setAttribute('hidden', '');
           r.style.setProperty('display', 'none', 'important');
@@ -227,18 +262,22 @@
     } else {
       // User clicked UP NEXT (0) or RELATED (2)
       renderers.forEach((r, idx) => {
-        const isLyrics = r.getAttribute('page-type') === 'MUSIC_PAGE_TYPE_TRACK_LYRICS' ||
-                         r.classList.contains('ytm-custom-lyrics-tab-renderer') ||
-                         idx === 1;
+        const isLyrics = r === lyricsContainer ||
+                         r.getAttribute('page-type') === 'MUSIC_PAGE_TYPE_TRACK_LYRICS' ||
+                         r.classList.contains('ytm-custom-lyrics-tab-renderer');
         if (isLyrics) {
           r.setAttribute('hidden', '');
           r.style.setProperty('display', 'none', 'important');
-        } else if (idx === targetIndex) {
-          r.removeAttribute('hidden');
-          r.style.removeProperty('display');
         } else {
-          r.setAttribute('hidden', '');
-          r.style.setProperty('display', 'none', 'important');
+          const isTarget = (targetIndex === 0 && (idx === 0 || r === renderers[0])) ||
+                           (targetIndex === 2 && (idx === renderers.length - 1 || r === renderers[renderers.length - 1]));
+          if (isTarget) {
+            r.removeAttribute('hidden');
+            r.style.removeProperty('display');
+          } else {
+            r.setAttribute('hidden', '');
+            r.style.setProperty('display', 'none', 'important');
+          }
         }
       });
     }
@@ -250,25 +289,38 @@
                        document.querySelector('tp-yt-paper-tabs');
 
     if (parentTabs) {
-      const tabs = Array.from(parentTabs.querySelectorAll('tp-yt-paper-tab'));
+      let tabs = Array.from(parentTabs.querySelectorAll('tp-yt-paper-tab'));
+
+      // If YouTube Music only rendered 2 tabs (Up Next and Related), insert our Lyrics tab at index 1
+      if (tabs.length === 2 && !parentTabs.querySelector('.ytm-lyrics-paper-tab')) {
+        const lyricsTab = document.createElement('tp-yt-paper-tab');
+        lyricsTab.className = 'style-scope ytmusic-player-page tab-header ytm-lyrics-paper-tab';
+        lyricsTab.setAttribute('role', 'tab');
+        lyricsTab.setAttribute('tabindex', '0');
+        lyricsTab.setAttribute('aria-selected', 'false');
+        lyricsTab.innerHTML = '<div class="tab-content style-scope tp-yt-paper-tab">Lyrics</div>';
+        parentTabs.insertBefore(lyricsTab, tabs[1]);
+        tabs = Array.from(parentTabs.querySelectorAll('tp-yt-paper-tab'));
+      }
+
       tabs.forEach((tab, index) => {
         const text = (tab.textContent || '').trim().toLowerCase();
         const isLyrics = text.includes('lyrics') || tab.getAttribute('page-type') === 'MUSIC_PAGE_TYPE_TRACK_LYRICS' || index === 1;
 
         if (isLyrics) {
-          if (tab.hasAttribute('disabled') || tab.getAttribute('aria-disabled') === 'true') {
-            tab.removeAttribute('disabled');
-            tab.setAttribute('aria-disabled', 'false');
-            tab.style.setProperty('pointer-events', 'auto', 'important');
-            tab.style.setProperty('opacity', '1', 'important');
-            tab.style.setProperty('cursor', 'pointer', 'important');
-          }
+          tab.removeAttribute('disabled');
+          tab.setAttribute('aria-disabled', 'false');
+          tab.style.setProperty('pointer-events', 'auto', 'important');
+          tab.style.setProperty('opacity', '1', 'important');
+          tab.style.setProperty('cursor', 'pointer', 'important');
         }
 
         if (!tab.dataset.ytmlBound) {
           tab.dataset.ytmlBound = 'true';
           tab.addEventListener('click', () => {
-            handleTabClick(tab, index);
+            const currentTabs = Array.from(parentTabs.querySelectorAll('tp-yt-paper-tab'));
+            const currentIndex = currentTabs.indexOf(tab);
+            handleTabClick(tab, currentIndex >= 0 ? currentIndex : index);
           }, true);
         }
       });
@@ -277,30 +329,119 @@
     mountLyricsInTab();
   }
 
-  // ─── 5. Player Bar Lyrics Toggle Button ───
+  // ─── 5. Player Bar Lyrics & Controls Integration ───
 
-  function injectToolbarLyricsButton() {
-    if (document.getElementById('ytm-custom-lyrics-toggle-btn')) return;
+  function injectTopBarCenterIsland() {
+    let island = document.getElementById('ytm-topbar-island');
+    if (island) {
+      updateIslandMeta();
+      return;
+    }
 
-    const rightControls = document.querySelector(SEL.rightControls);
-    if (!rightControls) return;
+    const playerBar = document.querySelector('ytmusic-player-bar');
+    if (!playerBar) return;
 
-    const btn = document.createElement('button');
-    btn.id = 'ytm-custom-lyrics-toggle-btn';
-    btn.className = 'ytm-custom-lyrics-btn';
-    btn.title = 'Apple Music Lyrics (L)';
-    btn.innerHTML = `
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
-        <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
-      </svg>
+    const middleControls = playerBar.querySelector('.middle-controls') || playerBar.querySelector('#middle-controls') || playerBar;
+
+    island = document.createElement('div');
+    island.id = 'ytm-topbar-island';
+    island.className = 'ytm-topbar-island';
+    island.title = 'Open Fullscreen Player / Lyrics';
+    island.innerHTML = `
+      <img id="ytm-island-art" class="ytm-island-art" src="" alt="" />
+      <div class="ytm-island-text">
+        <div id="ytm-island-title" class="ytm-island-title">—</div>
+        <div id="ytm-island-artist" class="ytm-island-artist">—</div>
+      </div>
     `;
 
-    btn.addEventListener('click', () => {
-      toggleFullLyricsPage();
-      btn.classList.toggle('ytm-btn-active');
+    island.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleFullLyricsPage('player');
     });
 
-    rightControls.insertBefore(btn, rightControls.firstChild);
+    middleControls.appendChild(island);
+    updateIslandMeta();
+  }
+
+  function updateIslandMeta() {
+    const islandArt = document.getElementById('ytm-island-art');
+    const islandTitle = document.getElementById('ytm-island-title');
+    const islandArtist = document.getElementById('ytm-island-artist');
+
+    if (islandArt && currentTrackMeta.artwork) {
+      islandArt.src = currentTrackMeta.artwork;
+    }
+    if (islandTitle) {
+      islandTitle.textContent = currentTrackMeta.title || '—';
+    }
+    if (islandArtist) {
+      islandArtist.textContent = currentTrackMeta.artist || '—';
+    }
+  }
+
+  function injectToolbarLyricsButton() {
+    injectTopBarCenterIsland();
+
+    const rightControls = document.querySelector('ytmusic-player-bar .right-controls-buttons') ||
+                          document.querySelector('#right-controls-buttons') ||
+                          document.querySelector('ytmusic-player-bar [slot="right-controls"]');
+    if (!rightControls) return;
+
+    let lyricsBtn = document.getElementById('ytm-custom-lyrics-toggle-btn');
+    if (!lyricsBtn) {
+      lyricsBtn = document.createElement('button');
+      lyricsBtn.id = 'ytm-custom-lyrics-toggle-btn';
+      lyricsBtn.className = 'ytm-custom-lyrics-btn';
+      lyricsBtn.title = 'Lyrics View (L)';
+      lyricsBtn.setAttribute('aria-label', 'Lyrics');
+      lyricsBtn.innerHTML = `
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+          <path d="M19 2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h4l3 3 3-3h4c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-9 11.5c0 .83-.67 1.5-1.5 1.5S7 14.33 7 13.5s.67-1.5 1.5-1.5c.14 0 .27.02.4.06-.05-.88-.5-1.63-1.17-2.11l.88-1.22c1.07.77 1.79 1.98 1.88 3.37.01.13.01.27.01.4zm6 0c0 .83-.67 1.5-1.5 1.5s-1.5-.67-1.5-1.5.67-1.5 1.5-1.5c.14 0 .27.02.4.06-.05-.88-.5-1.63-1.17-2.11l.88-1.22c1.07.77 1.79 1.98 1.88 3.37.01.13.01.27.01.4z"/>
+        </svg>
+      `;
+
+      lyricsBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleFullLyricsPage('lyrics');
+      });
+
+      const togglePageBtn = rightControls.querySelector('.toggle-player-page-button') ||
+                            rightControls.querySelector('#toggle-player-page-button') ||
+                            rightControls.querySelector('[aria-label*="queue"]') ||
+                            rightControls.querySelector('[aria-label*="Queue"]');
+      if (togglePageBtn) {
+        rightControls.insertBefore(lyricsBtn, togglePageBtn);
+      } else {
+        rightControls.insertBefore(lyricsBtn, rightControls.firstChild);
+      }
+    }
+
+    let queueBtn = document.getElementById('ytm-custom-queue-toggle-btn');
+    if (!queueBtn) {
+      queueBtn = document.createElement('button');
+      queueBtn.id = 'ytm-custom-queue-toggle-btn';
+      queueBtn.className = 'ytm-custom-lyrics-btn ytm-custom-queue-btn';
+      queueBtn.title = 'Queue View';
+      queueBtn.setAttribute('aria-label', 'Queue');
+      queueBtn.innerHTML = `
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+          <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/>
+        </svg>
+      `;
+      queueBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleFullLyricsPage('queue');
+      });
+      if (lyricsBtn && lyricsBtn.nextSibling) {
+        rightControls.insertBefore(queueBtn, lyricsBtn.nextSibling);
+      } else {
+        rightControls.appendChild(queueBtn);
+      }
+    }
+
+    const isPageOpen = document.getElementById('ytm-better-lyrics-page')?.classList.contains('ytm-page-open');
+    if (lyricsBtn) lyricsBtn.classList.toggle('ytm-btn-active', isPageOpen);
   }
 
   // ─── 6. Keyboard Shortcut ('L') ───
@@ -350,45 +491,46 @@
     }
   }
 
-  function setupObservers() {
-    const playerBar = document.querySelector(SEL.playerBar);
-    if (!playerBar) return;
-
-    const barObs = new MutationObserver(() => {
-      injectToolbarLyricsButton();
-      window.postMessage({ source: 'ytml-isolated', type: 'REQUEST_TRACK' }, '*');
-    });
-
-    barObs.observe(playerBar, {
-      childList: true,
-      subtree: true,
-      characterData: true
-    });
-
-    const pageObs = new MutationObserver(() => {
+  let observerDebounceTimer = null;
+  function scheduleContentUpdate() {
+    if (observerDebounceTimer) clearTimeout(observerDebounceTimer);
+    observerDebounceTimer = setTimeout(() => {
+      observerDebounceTimer = null;
+      hookVideo();
       ensureLyricsTabReady();
       injectToolbarLyricsButton();
-      hookVideo();
-    });
+      window.postMessage({ source: 'ytml-isolated', type: 'REQUEST_TRACK' }, '*');
+    }, 200);
+  }
 
-    pageObs.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['page-type', 'selected', 'hidden', 'aria-hidden']
-    });
-
+  function setupObservers() {
     hookVideo();
     injectToolbarLyricsButton();
     ensureLyricsTabReady();
 
-    // Heartbeat every 1.5s
+    // Hook YouTube SPA navigation events instead of recursively observing document.body
+    window.addEventListener('yt-navigate-finish', scheduleContentUpdate);
+    window.addEventListener('yt-page-data-updated', scheduleContentUpdate);
+    window.addEventListener('popstate', scheduleContentUpdate);
+
+    const playerBar = document.querySelector(SEL.playerBar);
+    if (playerBar) {
+      const barObs = new MutationObserver(() => {
+        injectToolbarLyricsButton();
+        window.postMessage({ source: 'ytml-isolated', type: 'REQUEST_TRACK' }, '*');
+      });
+
+      barObs.observe(playerBar, {
+        childList: true,
+        subtree: true
+      });
+    }
+
+    // Periodic gentle heartbeat
     setInterval(() => {
       window.postMessage({ source: 'ytml-isolated', type: 'REQUEST_TRACK' }, '*');
-      ensureLyricsTabReady();
-      injectToolbarLyricsButton();
       hookVideo();
-    }, 1500);
+    }, 2000);
 
     // Initial check
     window.postMessage({ source: 'ytml-isolated', type: 'REQUEST_TRACK' }, '*');
@@ -408,13 +550,15 @@
       return;
     }
 
-    const domObs = new MutationObserver((_, obs) => {
-      if (document.querySelector(SEL.playerBar)) {
-        obs.disconnect();
+    // Check periodically until playerBar or app layout is ready (at most 10s)
+    let retries = 0;
+    const interval = setInterval(() => {
+      retries++;
+      if (document.querySelector(SEL.playerBar) || retries > 20) {
+        clearInterval(interval);
         setupObservers();
       }
-    });
-    domObs.observe(document.body, { childList: true, subtree: true });
+    }, 250);
   }
 
   if (document.readyState === 'loading') {

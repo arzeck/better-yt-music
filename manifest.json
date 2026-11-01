@@ -27,6 +27,7 @@
         "src/lyrics-repository.js",
         "src/mesh-backdrop.js",
         "src/lyrics-page.js",
+        "src/apple-ui.js",
         "src/content.js"
       ],
       "css": ["src/styles.css"],

@@ -54,20 +54,33 @@
       return `${(title || '').trim()}|${(artist || '').trim()}|${Math.round((durationMs || 0) / 1000)}|${videoId || ''}`;
     }
 
+    clearCache(key = null) {
+      if (key) {
+        this.cache.delete(key);
+      } else {
+        this.cache.clear();
+      }
+    }
+
     /**
      * Fetches lyrics across all providers concurrently.
      *
      * @param {Object} trackInfo { title, artist, durationMs, videoId, album }
      * @param {Function} onProgress callback invoked as sources return: (activeResult, allResults) => void
+     * @param {boolean} forceRefresh whether to bypass and clear memory cache
      * @returns {Promise<Object>} { activeResult, allResults }
      */
-    async fetchLyrics(trackInfo, onProgress = null) {
+    async fetchLyrics(trackInfo, onProgress = null, forceRefresh = false) {
       const { title, artist, durationMs, videoId, album } = trackInfo;
       const key = this.getTrackKey(title, artist, durationMs, videoId);
       this.inFlightKey = key;
 
+      if (forceRefresh) {
+        this.cache.delete(key);
+      }
+
       // Check memory cache
-      if (this.cache.has(key)) {
+      if (!forceRefresh && this.cache.has(key)) {
         const cached = this.cache.get(key);
         if (onProgress) onProgress(cached.activeResult, cached.allResults);
         return cached;
